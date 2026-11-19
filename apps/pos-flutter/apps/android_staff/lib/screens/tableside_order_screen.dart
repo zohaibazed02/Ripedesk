@@ -55,11 +55,19 @@ class _TablesideOrderScreenState extends State<TablesideOrderScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   children: List.generate(6, (idx) {
                     final seat = idx + 1;
+                    final isSelected = _selectedSeat == seat;
                     return Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
                         label: Text('Seat $seat'),
-                        selected: _selectedSeat == seat,
+                        selected: isSelected,
+                        selectedColor: const Color(0xFF0F172A),
+                        backgroundColor: Colors.white,
+                        checkmarkColor: Colors.white,
+                        labelStyle: TextStyle(
+                          color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                          fontWeight: FontWeight.w600,
+                        ),
                         onSelected: (_) => setState(() => _selectedSeat = seat),
                       ),
                     );
