@@ -34,6 +34,7 @@ func NewServer(addr string, store *sqlite.Store, hub *Hub, processor *commands.P
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /lan/health", s.handleHealth)
 	mux.HandleFunc("GET /lan/catalog", s.handleCatalog)
 	mux.HandleFunc("GET /lan/tables", s.handleTables)
@@ -75,8 +76,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-ID")
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:decimal/decimal.dart';
 import 'package:flutter/foundation.dart' hide Category;
+import 'package:http/http.dart' as http;
 import 'package:pos_domain/pos_domain.dart';
 import 'package:uuid/uuid.dart';
 import '../data/pilot_catalog.dart';
@@ -111,6 +113,45 @@ class PosController extends ChangeNotifier {
     connectionMode = mode;
     if (pending != null) pendingOutboxCount = pending;
     notifyListeners();
+  }
+
+  Timer? _healthTimer;
+
+  void startHealthPolling({Duration interval = const Duration(seconds: 5)}) {
+    _healthTimer?.cancel();
+    checkLanHealth();
+    _healthTimer = Timer.periodic(interval, (_) => checkLanHealth());
+  }
+
+  Future<void> checkLanHealth() async {
+    final baseUrl = lanClient?.branchBaseUrl ?? 'http://127.0.0.1:8090';
+    final sw = Stopwatch()..start();
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/healthz'))
+          .timeout(const Duration(seconds: 2));
+      sw.stop();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        lanLatencyMs = sw.elapsedMilliseconds;
+        if (connectionMode != ConnectionMode.online) {
+          connectionMode = ConnectionMode.online;
+          notifyListeners();
+        }
+        return;
+      }
+    } catch (_) {
+      // Unreachable — stay in LAN offline fallback mode
+    }
+    if (connectionMode != ConnectionMode.lanOfflineInternet) {
+      connectionMode = ConnectionMode.lanOfflineInternet;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _healthTimer?.cancel();
+    super.dispose();
   }
 
   void toggleTheme() {

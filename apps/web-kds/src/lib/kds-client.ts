@@ -28,7 +28,9 @@ export interface KdsTicket {
 }
 
 export const DEFAULT_LAN_URL =
-  process.env.NEXT_PUBLIC_BRANCH_LAN_URL || "http://localhost:8090";
+  process.env.NEXT_PUBLIC_BRANCH_API_URL ||
+  process.env.NEXT_PUBLIC_BRANCH_LAN_URL ||
+  "http://127.0.0.1:8090";
 
 export function createPilotTickets(nowMs: number): KdsTicket[] {
   return [

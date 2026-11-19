@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { KdsHeader } from "../components/KdsHeader";
 import { TicketCard } from "../components/TicketCard";
 import {
+  DEFAULT_LAN_URL,
   KdsLanClient,
   createPilotTickets,
   type KdsConnectionState,
@@ -30,14 +31,66 @@ export default function KdsBoardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Connect to Branch LAN SSE with automatic 3s polling fallback
+  // Connect to Branch LAN SSE with automatic 3s polling fallback + live ticket hydration
   useEffect(() => {
+    const fetchLiveTickets = async () => {
+      try {
+        const res = await fetch(`${DEFAULT_LAN_URL}/lan/kds/tickets`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          tickets?: Array<{
+            id: string;
+            order_number?: string;
+            station?: string;
+            status?: string;
+            created_at?: string;
+            items_json?: string;
+          }>;
+        };
+        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+          const mapped: KdsTicket[] = data.tickets.map((t) => {
+            let parsedItems: Array<{ item_name?: string; name?: string; quantity?: string | number }> = [];
+            try {
+              parsedItems = t.items_json ? JSON.parse(t.items_json) : [];
+            } catch {
+              parsedItems = [];
+            }
+            const st = (t.station || "barista") as KdsTicket["station"];
+            return {
+              id: t.id,
+              orderNumber: t.order_number || t.id.slice(0, 8),
+              orderMode: "QUICK_SALE",
+              roundNumber: 1,
+              station: ["barista", "hot_kitchen", "cold_prep", "expediter"].includes(st)
+                ? st
+                : "barista",
+              status: (t.status as KdsTicket["status"]) || "queued",
+              createdAtMs: t.created_at ? Date.parse(t.created_at) || Date.now() : Date.now(),
+              items: parsedItems.map((it, i) => ({
+                id: `${t.id}-${i}`,
+                name: it.item_name || it.name || "Item",
+                quantity: Number(it.quantity || 1),
+              })),
+            };
+          });
+          setTickets(mapped);
+        }
+      } catch {
+        // Keep current/demo tickets if branch-service is not yet running
+      }
+    };
+
+    void fetchLiveTickets();
+    const pollId = setInterval(() => void fetchLiveTickets(), 3000);
+
     const client = new KdsLanClient();
     clientRef.current = client;
-    return client.connect({
+    const disconnect = client.connect({
       onStateChange: setConnectionState,
       onLanEvent: (_seq, eventType, payload) => {
-        if (eventType === "kds.ticket_updated" && typeof payload.ticket_id === "string") {
+        if (eventType === "order.upserted") {
+          void fetchLiveTickets();
+        } else if (eventType === "kds.ticket_updated" && typeof payload.ticket_id === "string") {
           setTickets((prev) =>
             prev.map((t) =>
               t.id === payload.ticket_id
@@ -51,6 +104,10 @@ export default function KdsBoardPage() {
         }
       },
     });
+    return () => {
+      clearInterval(pollId);
+      disconnect();
+    };
   }, []);
 
   // Keyboard shortcuts (1-5 station tabs, R for recall drawer)

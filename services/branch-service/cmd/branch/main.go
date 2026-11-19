@@ -49,6 +49,10 @@ func boolToStr(v bool) string {
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
+	if os.Getenv("CLOUD_API_URL") == "" {
+		_ = os.Setenv("CLOUD_API_URL", "https://ripedesk-cloud-api.onrender.com")
+	}
+
 	addr := os.Getenv("BRANCH_SERVICE_ADDR")
 	if addr == "" {
 		addr = ":8090"

@@ -17,7 +17,7 @@ void main() {
   final posController = PosController(
     lanClient: lanClient,
     printerAdapter: printerAdapter,
-  );
+  )..startHealthPolling();
   final dineInController = DineInController(
     lanClient: lanClient,
     printerAdapter: printerAdapter,
