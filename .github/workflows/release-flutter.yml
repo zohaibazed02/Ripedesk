@@ -16,6 +16,7 @@ jobs:
           channel: stable
       - working-directory: apps/pos-flutter/apps/windows_pos
         run: |
+          if (!(Test-Path windows)) { flutter create . --platforms=windows }
           flutter pub get
           flutter build windows --release
       - uses: actions/upload-artifact@v4
@@ -27,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -36,10 +37,12 @@ jobs:
           channel: stable
       - working-directory: apps/pos-flutter/apps/android_staff
         run: |
+          if [ ! -d android ]; then flutter create . --platforms=android; fi
           flutter pub get
           flutter build apk --release
       - working-directory: apps/pos-flutter/apps/rider_app
         run: |
+          if [ ! -d android ]; then flutter create . --platforms=android; fi
           flutter pub get
           flutter build apk --release
       - uses: actions/upload-artifact@v4
