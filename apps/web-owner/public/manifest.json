@@ -1,0 +1,10 @@
+{
+  "name": "Hospitality OS Owner",
+  "short_name": "Hospitality Owner",
+  "description": "Installable Owner Reporting & AI Insights PWA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090B",
+  "theme_color": "#0F172A",
+  "orientation": "portrait-primary"
+}

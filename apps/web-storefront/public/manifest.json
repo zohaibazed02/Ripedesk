@@ -1,0 +1,9 @@
+{
+  "name": "Artisan Roast & Bistro — Order Ahead",
+  "short_name": "Artisan Roast",
+  "description": "Coffee Pickup, QSR Delivery & Dine-In QR Ordering PWA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#0F172A"
+}

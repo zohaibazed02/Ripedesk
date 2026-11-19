@@ -1,0 +1,492 @@
+openapi: 3.1.0
+info:
+  title: Hospitality OS — Enterprise POS, ERP & Delivery API
+  version: 0.2.0
+  description: >
+    Strict REST API contract shared between Go Cloud API, Go Branch LAN Service,
+    Next.js web applications, and Flutter POS / Staff / Rider clients.
+servers:
+  - url: http://localhost:8080
+    description: Cloud API (Local Development)
+  - url: https://api.hospitality-os.example
+    description: Cloud API (Production)
+  - url: http://192.168.1.10:8090
+    description: Local Branch LAN Server (Offline-Capable)
+tags:
+  - name: System
+  - name: Auth
+  - name: Devices
+  - name: Tenants
+  - name: Menu
+  - name: Sync
+  - name: Inventory
+  - name: Procurement
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      summary: Service health probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Email/password login returning JWT, user profile, entitlements, and branches
+      operationId: authLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_slug, email, password]
+              properties:
+                tenant_slug: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Authenticated session
+        "401":
+          description: Invalid credentials
+  /api/v1/auth/pin-verify:
+    post:
+      tags: [Auth]
+      summary: Fast staff PIN verification for POS quick switch and manager overrides
+      operationId: authPinVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin, branch_id]
+              properties:
+                pin: { type: string }
+                branch_id: { type: string, format: uuid }
+                require_override: { type: boolean }
+                reason: { type: string }
+      responses:
+        "200":
+          description: PIN verified
+        "401":
+          description: Invalid PIN
+        "403":
+          description: Override permission required
+  /api/v1/devices/enroll:
+    post:
+      tags: [Devices]
+      summary: Enroll a branch POS, Staff, KDS, or Branch Server device
+      operationId: enrollDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch_id, device_name, device_type, hardware_fingerprint]
+              properties:
+                branch_id: { type: string, format: uuid }
+                device_name: { type: string }
+                device_type:
+                  type: string
+                  enum: [windows_pos, android_staff, kds_browser, branch_server]
+                hardware_fingerprint: { type: string }
+      responses:
+        "201":
+          description: Device enrolled with credential and branch config
+  /api/v1/tenants/me/branches:
+    get:
+      tags: [Tenants]
+      summary: List tenant branches with real-time sync health and computed is_online status
+      operationId: listMyBranches
+      responses:
+        "200":
+          description: List of tenant branches
+  /api/v1/branches/{branchId}/heartbeat:
+    post:
+      tags: [Tenants]
+      summary: Update branch heartbeat TTL, last_sync_at, and pending sync queue depth
+      operationId: postBranchHeartbeat
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pending_sync_count]
+              properties:
+                pending_sync_count: { type: integer, minimum: 0 }
+                oldest_pending_tx_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          description: Heartbeat recorded
+  /api/v1/branches/{branchId}/catalog:
+    get:
+      tags: [Menu]
+      summary: Fetch branch-scoped categories, menu items, modifiers, and floor/table map with ETag
+      operationId: getBranchCatalog
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Full branch catalog with ETag header
+        "304":
+          description: Catalog unchanged (If-None-Match matched)
+  /api/v1/branches/{branchId}/menu-items:
+    post:
+      tags: [Menu]
+      summary: Create or update a branch menu item and availability toggle (owner/branch_manager)
+      operationId: upsertBranchMenuItem
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id, sku, name, base_price, tax_rate_percent, prep_station, is_available]
+              properties:
+                category_id: { type: string, format: uuid }
+                sku: { type: string }
+                name: { type: string }
+                description: { type: string }
+                base_price: { type: string, description: "Fixed-precision NUMERIC(19,4)" }
+                tax_rate_percent: { type: string, description: "Fixed-precision NUMERIC(6,3)" }
+                prep_station:
+                  type: string
+                  enum: [barista, hot_kitchen, cold_prep, pastry, expediter]
+                is_available: { type: boolean }
+      responses:
+        "200":
+          description: Menu item saved
+  /api/v1/branches/{branchId}/sync/push:
+    post:
+      tags: [Sync]
+      summary: Idempotent batch ingestion of up to 100 ordered offline branch outbox commands
+      operationId: pushBranchSyncBatch
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pending_sync_count, commands]
+              properties:
+                pending_sync_count: { type: integer, minimum: 0 }
+                oldest_pending_tx_at: { type: string, format: date-time, nullable: true }
+                commands:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [event_id, command_type, aggregate_type, aggregate_id, idempotency_key, payload, created_offline_at]
+                    properties:
+                      event_id: { type: string, format: uuid }
+                      command_type: { type: string }
+                      aggregate_type: { type: string }
+                      aggregate_id: { type: string, format: uuid }
+                      idempotency_key: { type: string }
+                      payload: { type: object }
+                      created_offline_at: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Per-event acks (acked, duplicate_acked, rejected) and cloud_seq cursor
+  /api/v1/branches/{branchId}/sync/pull:
+    get:
+      tags: [Sync]
+      summary: Cursor-based pull of cloud-originated updates for branch catch-up
+      operationId: pullBranchSyncEvents
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: since_cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cloud outbox events and next_cursor
+  /api/v1/branches/{branchId}/sync/review-queue:
+    get:
+      tags: [Sync]
+      summary: List rejected or version-conflicting offline commands for manager review
+      operationId: listSyncReviewQueue
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Sync review queue items
+  /api/v1/branches/{branchId}/sync/review-queue/{id}/resolve:
+    post:
+      tags: [Sync]
+      summary: Resolve or discard a sync review queue item
+      operationId: resolveSyncReviewItem
+      parameters:
+        - name: branchId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [resolved, discarded]
+      responses:
+        "200":
+          description: Review queue item updated
+  /api/v1/inventory/ingredients:
+    get:
+      tags: [Inventory]
+      summary: List tenant ingredients with base/purchasing units and pack conversions
+      operationId: listIngredients
+      responses:
+        "200":
+          description: List of ingredients
+    post:
+      tags: [Inventory]
+      summary: Create or update an ingredient and its unit conversions
+      operationId: upsertIngredient
+      responses:
+        "200":
+          description: Saved ingredient
+  /api/v1/inventory/recipes:
+    get:
+      tags: [Inventory]
+      summary: List immutable recipe versions for a menu item or modifier
+      operationId: listRecipeVersions
+      parameters:
+        - name: target_type
+          in: query
+          schema: { type: string, enum: [menu_item, modifier] }
+        - name: target_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Recipe version history
+    post:
+      tags: [Inventory]
+      summary: Publish a new immutable recipe version
+      operationId: publishRecipeVersion
+      responses:
+        "201":
+          description: Published recipe version
+  /api/v1/inventory/recipes/simulate-cost:
+    post:
+      tags: [Inventory]
+      summary: Simulate theoretical COGS, Food Cost %, and base-unit explosion for an item + modifiers
+      operationId: simulateRecipeCost
+      responses:
+        "200":
+          description: Theoretical COGS and ingredient consumption breakdown
+  /api/v1/inventory/transfers:
+    get:
+      tags: [Inventory]
+      summary: List warehouse-to-branch stock transfers
+      operationId: listWarehouseTransfers
+      responses:
+        "200":
+          description: List of warehouse transfers
+    post:
+      tags: [Inventory]
+      summary: Create a warehouse-to-branch stock transfer
+      operationId: createWarehouseTransfer
+      responses:
+        "201":
+          description: Transfer created
+  /api/v1/inventory/transfers/{id}/reserve:
+    post:
+      tags: [Inventory]
+      summary: Reserve available warehouse stock for a transfer
+      operationId: reserveWarehouseTransfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Stock reserved
+  /api/v1/inventory/transfers/{id}/dispatch:
+    post:
+      tags: [Inventory]
+      summary: Dispatch reserved transfer and deduct warehouse stock (transfer_out)
+      operationId: dispatchWarehouseTransfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Transfer in transit
+  /api/v1/inventory/transfers/{id}/receive:
+    post:
+      tags: [Inventory]
+      summary: Receive transfer at branch with partial/damage/shortage-to-PO-draft handling
+      operationId: receiveWarehouseTransfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Transfer received and reconciled
+  /api/v1/procurement/requisitions:
+    get:
+      tags: [Procurement]
+      summary: List kitchen requisitions with transfer and PO links
+      operationId: listRequisitions
+      responses:
+        "200": { description: Requisitions list }
+    post:
+      tags: [Procurement]
+      summary: Submit an offline-safe kitchen requisition (deduplicated by stable UUID)
+      operationId: submitRequisition
+      responses:
+        "201": { description: Requisition submitted }
+  /api/v1/procurement/requisitions/{id}/approve:
+    post:
+      tags: [Procurement]
+      summary: Approve requisition and run split-sourcing (Warehouse Transfer + Shortage PO Draft)
+      operationId: approveRequisition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Requisition approved }
+  /api/v1/procurement/replenishment/run:
+    post:
+      tags: [Procurement]
+      summary: Run automated replenishment planner grouping PO drafts by supplier/location/currency/window
+      operationId: runReplenishmentPlanner
+      responses:
+        "200": { description: Grouped PO replenishment drafts }
+  /api/v1/procurement/purchase-orders:
+    get:
+      tags: [Procurement]
+      summary: List purchase orders with guardrail review status
+      operationId: listPurchaseOrders
+      responses:
+        "200": { description: Purchase orders list }
+  /api/v1/procurement/purchase-orders/{id}/dispatch:
+    post:
+      tags: [Procurement]
+      summary: Idempotent outbound supplier dispatch preventing duplicate sends
+      operationId: dispatchPurchaseOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: PO dispatched idempotently }
+
+  /api/v1/reports/owner/summary:
+    get:
+      summary: Executive Owner KPI summary with data freshness and POS-to-GL reconciliation
+      tags: [Reporting]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: branch_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Exact Decimal executive KPI summary
+  /api/v1/reports/owner/branch-comparison:
+    get:
+      summary: Side-by-side multi-branch performance comparison and rankings
+      tags: [Reporting]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Normalized multi-branch comparison matrix
+  /api/v1/reports/owner/kitchen-sla:
+    get:
+      summary: Kitchen prep SLA metrics (avg, p95, overdue count, on-time rate)
+      tags: [Reporting]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: branch_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Kitchen SLA breakdown
+
+  /api/v1/ai/ask:
+    post:
+      summary: Ask the Read-Only AI Reporting Agent a grounded executive question
+      tags: [AI Reporting]
+      responses:
+        "200":
+          description: Grounded AIReportResponse with audit_metadata and human_review_suggestions
+        "403":
+          description: Forbidden branch scope
+  /api/v1/ai/daily-briefing:
+    get:
+      summary: Automated morning executive briefing (read-only, tenant-scoped)
+      tags: [AI Reporting]
+      parameters:
+        - name: branch_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Grounded morning briefing with freshness warnings and advisory suggestions

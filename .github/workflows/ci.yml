@@ -1,0 +1,47 @@
+name: CI — Go Services & Next.js Monorepo
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go-cloud-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/cloud-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -v ./...
+
+  go-branch-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/branch-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -v ./...
+
+  web-monorepo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run typecheck:all
+      - run: npm run build:all

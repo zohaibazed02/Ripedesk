@@ -1,0 +1,9 @@
+name: pos_flutter_workspace
+publish_to: none
+environment:
+  sdk: ^3.6.0
+workspace:
+  - packages/pos_domain
+  - apps/windows_pos
+  - apps/android_staff
+  - apps/rider_app

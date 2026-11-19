@@ -1,0 +1,37 @@
+{
+  "name": "hospitality-os-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise multi-tenant Restaurant & Coffee Shop POS, ERP, and Delivery Ecosystem (Online & Offline LAN)",
+  "workspaces": [
+    "apps/web-admin",
+    "apps/web-storefront",
+    "apps/web-kds",
+    "apps/web-owner",
+    "packages/ui",
+    "packages/openapi"
+  ],
+  "scripts": {
+    "dev:admin": "npm run dev --workspace=@hospitality/web-admin",
+    "dev:storefront": "npm run dev --workspace=@hospitality/web-storefront",
+    "dev:kds": "npm run dev --workspace=@hospitality/web-kds",
+    "dev:owner": "npm run dev --workspace=@hospitality/web-owner",
+    "build": "npm run build --workspaces --if-present",
+    "build:admin": "npm run build --workspace=@hospitality/web-admin",
+    "build:storefront": "npm run build --workspace=@hospitality/web-storefront",
+    "build:kds": "npm run build --workspace=@hospitality/web-kds",
+    "build:owner": "npm run build --workspace=@hospitality/web-owner",
+    "build:all": "npm run build:admin && npm run build:storefront && npm run build:kds && npm run build:owner",
+    "lint": "npm run lint --workspaces --if-present",
+    "lint:admin": "npm run lint --workspace=@hospitality/web-admin",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck:admin": "npm run typecheck --workspace=@hospitality/web-admin",
+    "typecheck:storefront": "npm run typecheck --workspace=@hospitality/web-storefront",
+    "typecheck:kds": "npm run typecheck --workspace=@hospitality/web-kds",
+    "typecheck:owner": "npm run typecheck --workspace=@hospitality/web-owner",
+    "typecheck:all": "npm run typecheck:admin && npm run typecheck:storefront && npm run typecheck:kds && npm run typecheck:owner"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-hospitality_os}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-changeme_minio}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  cloud-api:
+    build:
+      context: ../services/cloud-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  cloud-worker:
+    build:
+      context: ../services/cloud-api
+      dockerfile: Dockerfile
+    entrypoint: ["/app/worker"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  branch-service:
+    build:
+      context: ../services/branch-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BRANCH_DB_PATH: /var/lib/branch-service/branch.db
+      CLOUD_API_URL: http://cloud-api:8080
+    ports:
+      - "8090:8090"
+    volumes:
+      - branchdata:/var/lib/branch-service
+
+volumes:
+  pgdata:
+  miniodata:
+  branchdata:

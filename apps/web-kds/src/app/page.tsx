@@ -1,0 +1,265 @@
+"use client";
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { KdsHeader } from "../components/KdsHeader";
+import { TicketCard } from "../components/TicketCard";
+import {
+  KdsLanClient,
+  createPilotTickets,
+  type KdsConnectionState,
+  type KdsStation,
+  type KdsTicket,
+} from "../lib/kds-client";
+
+export default function KdsBoardPage() {
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [tickets, setTickets] = useState<KdsTicket[]>(() =>
+    createPilotTickets(Date.now())
+  );
+  const [activeStation, setActiveStation] = useState<KdsStation>("all");
+  const [connectionState, setConnectionState] =
+    useState<KdsConnectionState>("demo_mode");
+  const [recallOpen, setRecallOpen] = useState(false);
+
+  const clientRef = useRef<KdsLanClient | null>(null);
+  const simCounterRef = useRef(500);
+
+  // 1-second SLA timer tick
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Connect to Branch LAN SSE with automatic 3s polling fallback
+  useEffect(() => {
+    const client = new KdsLanClient();
+    clientRef.current = client;
+    return client.connect({
+      onStateChange: setConnectionState,
+      onLanEvent: (_seq, eventType, payload) => {
+        if (eventType === "kds.ticket_updated" && typeof payload.ticket_id === "string") {
+          setTickets((prev) =>
+            prev.map((t) =>
+              t.id === payload.ticket_id
+                ? {
+                    ...t,
+                    status: (payload.status as KdsTicket["status"]) ?? t.status,
+                  }
+                : t
+            )
+          );
+        }
+      },
+    });
+  }, []);
+
+  // Keyboard shortcuts (1-5 station tabs, R for recall drawer)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "1") setActiveStation("all");
+      else if (e.key === "2") setActiveStation("barista");
+      else if (e.key === "3") setActiveStation("hot_kitchen");
+      else if (e.key === "4") setActiveStation("cold_prep");
+      else if (e.key === "5") setActiveStation("expediter");
+      else if (e.key.toLowerCase() === "r") setRecallOpen((prev) => !prev);
+      else if (e.key === "Escape") setRecallOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const activeTickets = useMemo(
+    () => tickets.filter((t) => t.status !== "bumped"),
+    [tickets]
+  );
+
+  const bumpedTickets = useMemo(
+    () => tickets.filter((t) => t.status === "bumped"),
+    [tickets]
+  );
+
+  const countsByStation = useMemo<Record<KdsStation, number>>(() => {
+    const counts: Record<KdsStation, number> = {
+      all: activeTickets.length,
+      barista: 0,
+      hot_kitchen: 0,
+      cold_prep: 0,
+      expediter: 0,
+    };
+    for (const t of activeTickets) {
+      counts[t.station] += 1;
+    }
+    return counts;
+  }, [activeTickets]);
+
+  const visibleTickets = useMemo(() => {
+    const filtered =
+      activeStation === "all"
+        ? activeTickets
+        : activeTickets.filter((t) => t.station === activeStation);
+    return [...filtered].sort((a, b) => a.createdAtMs - b.createdAtMs);
+  }, [activeTickets, activeStation]);
+
+  function handleToggleItem(ticketId: string, itemId: string) {
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId
+          ? {
+              ...t,
+              items: t.items.map((it) =>
+                it.id === itemId ? { ...it, completed: !it.completed } : it
+              ),
+            }
+          : t
+      )
+    );
+  }
+
+  function handleStartPrep(ticketId: string) {
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId
+          ? { ...t, status: "preparing", prepConfirmedAtMs: Date.now() }
+          : t
+      )
+    );
+    void clientRef.current?.bumpTicket(ticketId, "preparing");
+  }
+
+  function handleBumpReady(ticketId: string) {
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId
+          ? { ...t, status: "bumped", bumpedAtMs: Date.now() }
+          : t
+      )
+    );
+    void clientRef.current?.bumpTicket(ticketId, "bumped");
+  }
+
+  function handleRecall(ticketId: string) {
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId ? { ...t, status: "recalled" } : t
+      )
+    );
+    void clientRef.current?.bumpTicket(ticketId, "recalled");
+  }
+
+  function handleSimulateTicket() {
+    const num = ++simCounterRef.current;
+    const newTicket: KdsTicket = {
+      id: `tk-sim-${num}`,
+      orderNumber: `F7-${num}`,
+      orderMode: num % 2 === 0 ? "QR_ORDER" : "DRIVE_THRU",
+      roundNumber: 1,
+      station: num % 2 === 0 ? "barista" : "hot_kitchen",
+      status: "queued",
+      createdAtMs: Date.now(),
+      items: [
+        {
+          id: `sim-it-${num}`,
+          name: num % 2 === 0 ? "Large Oat Latte" : "Wood-Fired Margherita",
+          quantity: 1,
+          modifiers: num % 2 === 0 ? ["Extra Shot"] : ["Extra Basil"],
+        },
+      ],
+    };
+    setTickets((prev) => [...prev, newTicket]);
+  }
+
+  return (
+    <div className="min-h-screen bg-[#09090B] text-zinc-100">
+      <KdsHeader
+        activeStation={activeStation}
+        onSelectStation={setActiveStation}
+        countsByStation={countsByStation}
+        connectionState={connectionState}
+        bumpedCount={bumpedTickets.length}
+        onOpenRecall={() => setRecallOpen(true)}
+        onSimulateTicket={handleSimulateTicket}
+      />
+
+      <main className="p-4">
+        {visibleTickets.length === 0 ? (
+          <div className="flex h-[65vh] flex-col items-center justify-center rounded-xl border border-dashed border-zinc-800 text-center">
+            <p className="text-lg font-bold text-zinc-300">All Caught Up</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              No active tickets in this station. New LAN orders appear in &lt; 1s.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {visibleTickets.map((ticket) => (
+              <TicketCard
+                key={ticket.id}
+                ticket={ticket}
+                nowMs={nowMs}
+                onToggleItem={handleToggleItem}
+                onStartPrep={handleStartPrep}
+                onBumpReady={handleBumpReady}
+              />
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* Recall Drawer */}
+      {recallOpen && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs"
+          onClick={() => setRecallOpen(false)}
+        >
+          <aside
+            className="flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-[#121215] p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h2 className="text-sm font-bold text-white">
+                Recently Bumped Tickets ({bumpedTickets.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => setRecallOpen(false)}
+                className="rounded px-2 py-1 font-mono text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
+              >
+                ESC
+              </button>
+            </div>
+            <div className="mt-4 flex-1 space-y-3 overflow-y-auto">
+              {bumpedTickets.length === 0 ? (
+                <p className="text-xs text-zinc-500">
+                  No bumped tickets available to recall yet.
+                </p>
+              ) : (
+                bumpedTickets.map((tk) => (
+                  <div
+                    key={tk.id}
+                    className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/70 p-3"
+                  >
+                    <div>
+                      <p className="font-mono text-sm font-bold text-white">
+                        {tk.orderNumber}
+                        {tk.tableCode ? ` · TBL ${tk.tableCode}` : ""}
+                      </p>
+                      <p className="text-xs text-zinc-400">
+                        {tk.station.toUpperCase()} · {tk.items.length} items
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRecall(tk.id)}
+                      className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-400"
+                    >
+                      Recall
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,20 @@
+name: pos_domain
+description: Shared Dart domain models, fixed-precision pricing engine, Drift SQLite store, and Branch LAN SSE client for Windows POS, Android Staff, and Rider apps.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  decimal: ^3.0.2
+  drift: ^2.22.1
+  http: ^1.2.2
+  sqlite3: ^2.4.7
+  uuid: ^4.5.1
+
+dev_dependencies:
+  build_runner: ^2.4.13
+  drift_dev: ^2.22.1
+  test: ^1.25.8

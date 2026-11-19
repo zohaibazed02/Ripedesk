@@ -1,0 +1,21 @@
+name: windows_pos
+description: Offline-first Windows Desktop POS terminal for Hospitality OS.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  decimal: ^3.0.2
+  flutter:
+    sdk: flutter
+  pos_domain:
+    path: ../../packages/pos_domain
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: ^1.25.8
