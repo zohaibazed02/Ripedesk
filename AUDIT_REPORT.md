@@ -190,3 +190,23 @@ All 15 Gate 2 Go unit tests executed via `go test -v ./internal/inventory/... ./
 | **Gate 3** | **PASS (Closed)** | Storefront UI Live API Fetch | `apps/web-storefront/src/app/page.tsx` | Closed: fetches live `/config`, `/menu`, and submits `POST .../checkout` with explicit offline fallback banner. |
 | **Gate 4** | **PASS (Closed)** | Owner PWA & AI Analyst Live API Fetch | `apps/web-owner/src/app/page.tsx`, `apps/web-owner/src/app/ai/page.tsx` | Closed: fetches live `/reports/owner/summary`, `/branch-comparison`, and `POST /api/v1/ai/ask` with explicit offline/auth notice. |
 | **Gate 5** | **PASS (Closed)** | Live HTTP Load Generation in `cmd/loadtest` | `services/cloud-api/cmd/loadtest/main.go` | Closed: real concurrent `net/http` worker goroutines (`runLiveHTTPWorkers`) with skewed tenant distribution (`-skew`), live default mode, and `httptest` verification. |
+
+---
+
+## Phase 6 — Final Cross-Repo Integration, CI/CD & Release Sign-Off
+
+### Cross-App Contract Matrix — **PASS**
+- **`windows_pos` & `android_staff` ↔ `services/branch-service`**:
+  - `GET /healthz` → `{ cloud_reachable, pending_outbox_count, branch_id }` parsed into `ConnectionMode.cloudConnected` / `lanOfflineInternet`.
+  - `POST /lan/commands/orders` → exact `commands.CreateOrUpdateOrderInput` + `OrderItemInput` (`menu_item_id`, `item_name`, `prep_station`, `quantity`, `unit_price`, `line_total`, `check_number`, `idempotency_key`).
+- **`apps/web-kds` ↔ `services/branch-service`**:
+  - `GET /lan/kds/tickets` → `{ tickets: [...] }` (always `[]` when empty, zero SQLite `MaxOpenConns(1)` deadlock, verified by `TestKDSTicketsAndHealthz_NoSQLitePoolDeadlock`).
+  - `GET /lan/stream` (SSE) + `POST /lan/commands/kds/bump` with visible error banner on failure.
+- **`branch-service`, `web-owner`, `web-storefront`, `rider_app` ↔ `services/cloud-api`**:
+  - `POST /api/v1/auth/login` (Bearer JWT HS256), `POST /api/v1/branches/{branchId}/heartbeat`, `POST /api/v1/branches/{branchId}/sync/push` (`X-Device-ID` + `X-Device-Signature` + nested savepoints + `pgx.QueryExecModeExec`), `GET /api/v1/reports/owner/{summary,branch-comparison}`, `POST /api/v1/ai/ask`, `GET/POST /api/v1/storefront/{tenantSlug}/{config,menu,checkout}`, `POST /api/v1/delivery/trips/{tripId}/status`, `POST /api/v1/telemetry/gps/batch`.
+  - CORS allows `https://*.vercel.app`, `localhost:*`, `127.0.0.1:*`, and configured `CORS_ORIGINS` with `OPTIONS` → `204`.
+
+### CI/CD & Repo Hygiene — **PASS**
+- `.github/workflows/ci.yml`: Runs `go build/vet/test` for both Go services and `typecheck:all` + `build:all` for all 4 Next.js apps.
+- `.github/workflows/release-flutter.yml`: Uses `actions/setup-java@v5`, scaffolds missing native runners, and builds `windows_pos`, `android_staff`, and `rider_app` with `uses-material-design: true` bundled in all 3 `pubspec.yaml` files.
+- `.gitignore`: Blocks `.env`, `*.db`, `.next/`, `build/`, and `start-branch-local.bat` so live secrets and local SQLite files cannot leak into git.
