@@ -65,31 +65,56 @@ class _QuickSaleScreenState extends State<QuickSaleScreen> {
       ),
     );
     if (res != null && mounted) {
-      final conf = await widget.controller.settlePayment(
-        paymentMethod: res.paymentMethod,
-        tenderedAmount: res.tenderedAmount,
-      );
-      _customerCtrl.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: PosColors.emerald,
-            content: Text(
-              'Settled ${conf.orderNumber} · Change Due: ${widget.controller.branch.currencyCode} ${conf.changeDue.toStringAsFixed(2)}',
-            ),
-          ),
+      try {
+        final conf = await widget.controller.settlePayment(
+          paymentMethod: res.paymentMethod,
+          tenderedAmount: res.tenderedAmount,
         );
+        _customerCtrl.clear();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: PosColors.emerald,
+              content: Text(
+                'Settled ${conf.orderNumber} · Change Due: ${widget.controller.branch.currencyCode} ${conf.changeDue.toStringAsFixed(2)}',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: PosColors.rose,
+              content: Text('Order/Payment failed: $e'),
+            ),
+          );
+        }
       }
     }
   }
 
   Future<void> _sendToBarista() async {
     if (widget.controller.cart.isEmpty) return;
-    final orderNo = await widget.controller.sendToBarista();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Sent $orderNo to Barista / Kitchen KDS')),
-      );
+    try {
+      final orderNo = await widget.controller.sendToBarista();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: PosColors.emerald,
+            content: Text('Sent $orderNo to Barista / Kitchen KDS'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: PosColors.rose,
+            content: Text('Send to Barista failed: $e'),
+          ),
+        );
+      }
     }
   }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -261,11 +262,13 @@ func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOrderCommand(w http.ResponseWriter, r *http.Request) {
 	var in commands.CreateOrUpdateOrderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order payload"})
+		slog.Error("lan_order_decode_failed", "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order payload: " + err.Error()})
 		return
 	}
 	res, err := s.processor.CreateOrUpdateOrder(r.Context(), in)
 	if err != nil {
+		slog.Error("lan_order_command_failed", "order_id", in.OrderID, "order_number", in.OrderNumber, "error", err)
 		if errors.Is(err, commands.ErrVersionConflict) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return

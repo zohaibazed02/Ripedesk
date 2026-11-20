@@ -1,6 +1,7 @@
 package lan
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -127,5 +128,79 @@ func TestConcurrentSSEAndHealthz_NeverBlocks(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("call %d GET /healthz failed: status=%d body=%s", i, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestWindowsPosOrderPayload_AppearsOnKDSTickets(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "pos_to_kds.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer store.Close()
+
+	hub := NewHub()
+	proc := commands.NewProcessor(store, noopPublisher{})
+	sp := spooler.NewSpooler(store)
+	srv := NewServer(":0", store, hub, proc, sp)
+
+	// Exact raw JSON payload produced by windows_pos PosController.sendToBarista()
+	rawPayload := `{
+		"order_id": "ord-win-9901",
+		"tenant_id": "422200de-8670-4aa8-a9cf-b09ec4001ebd",
+		"branch_id": "2c905f5a-8dde-448b-a3fa-592c0de66c15",
+		"order_number": "F7-1001",
+		"order_mode": "quick_sale",
+		"expected_version": 0,
+		"subtotal": "950.00",
+		"tax_total": "152.00",
+		"discount_total": "0",
+		"grand_total": "1102.00",
+		"idempotency_key": "cmd-ord-win-9901",
+		"items": [
+			{
+				"menu_item_id": "item-oat-latte",
+				"item_name": "Large Oat Latte",
+				"prep_station": "barista",
+				"quantity": "1",
+				"unit_price": "950.00",
+				"line_total": "950.00",
+				"check_number": 1
+			}
+		]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/lan/commands/orders", bytes.NewBufferString(rawPayload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /lan/commands/orders status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	kdsReq := httptest.NewRequest(http.MethodGet, "/lan/kds/tickets", nil)
+	kdsRec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(kdsRec, kdsReq)
+	if kdsRec.Code != http.StatusOK {
+		t.Fatalf("GET /lan/kds/tickets status=%d body=%s", kdsRec.Code, kdsRec.Body.String())
+	}
+
+	var parsed struct {
+		Tickets []struct {
+			ID          string `json:"id"`
+			OrderNumber string `json:"order_number"`
+			Station     string `json:"station"`
+			Status      string `json:"status"`
+			ItemsJSON   string `json:"items_json"`
+		} `json:"tickets"`
+	}
+	if err := json.Unmarshal(kdsRec.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("decode kds response: %v", err)
+	}
+	if len(parsed.Tickets) != 1 {
+		t.Fatalf("expected 1 ticket on KDS, got %d", len(parsed.Tickets))
+	}
+	tk := parsed.Tickets[0]
+	if tk.OrderNumber != "F7-1001" || tk.Station != "barista" || tk.ItemsJSON == "" || tk.ItemsJSON == "[]" {
+		t.Fatalf("unexpected KDS ticket: %+v", tk)
 	}
 }
