@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:decimal/decimal.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:pos_domain/pos_domain.dart';
 import 'package:uuid/uuid.dart';
 
@@ -53,8 +54,41 @@ class StaffAppController extends ChangeNotifier {
 
   StaffSession? activeSession;
   ConnectionMode connectionMode = ConnectionMode.lanOfflineInternet;
+  int pendingOutboxCount = 0;
   bool isDarkMode = false;
   bool onlyMyTables = true;
+  Timer? _healthTimer;
+
+  void startHealthPolling({Duration interval = const Duration(seconds: 5)}) {
+    _healthTimer?.cancel();
+    checkLanHealth();
+    _healthTimer = Timer.periodic(interval, (_) => checkLanHealth());
+  }
+
+  Future<void> checkLanHealth() async {
+    final baseUrl = lanClient?.branchBaseUrl ?? 'http://192.168.1.10:8090';
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/healthz'))
+          .timeout(const Duration(seconds: 2));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        final cloudReachable = body['cloud_reachable'] as bool? ?? false;
+        pendingOutboxCount = body['pending_outbox_count'] as int? ?? 0;
+        connectionMode = cloudReachable
+            ? ConnectionMode.cloudConnected
+            : ConnectionMode.lanOfflineInternet;
+        notifyListeners();
+        return;
+      }
+    } catch (_) {
+      // Unreachable — stay in LAN offline mode
+    }
+    if (connectionMode != ConnectionMode.lanOfflineInternet) {
+      connectionMode = ConnectionMode.lanOfflineInternet;
+      notifyListeners();
+    }
+  }
 
   final List<DiningTable> tables = [];
   final List<MenuItem> menuItems = [];
@@ -220,6 +254,7 @@ class StaffAppController extends ChangeNotifier {
     final nextVersion = active.order.orderVersion + 1;
     final items = List<OrderLineItem>.of(active.draftItems);
 
+    final totals = calculator.calculate(active.allItems);
     if (lanClient != null) {
       await lanClient!.postCommand('/lan/commands/orders', {
         'order_id': active.order.id,
@@ -227,8 +262,22 @@ class StaffAppController extends ChangeNotifier {
         'order_mode': OrderMode.dineIn.wireValue,
         'table_id': tableId,
         'expected_version': active.order.orderVersion,
-        'grand_total': calculator.calculate(active.allItems).grandTotal.toString(),
-        'items': items.map((i) => i.toJson()).toList(),
+        'subtotal': totals.subtotal.toString(),
+        'tax_total': totals.taxTotal.toString(),
+        'discount_total': totals.discountTotal.toString(),
+        'grand_total': totals.grandTotal.toString(),
+        'idempotency_key': 'cmd-${active.order.id}-r$nextRound',
+        'items': items
+            .map((i) => {
+                  'menu_item_id': i.menuItemId,
+                  'item_name': i.itemName,
+                  'prep_station': i.prepStation,
+                  'quantity': i.quantity.toString(),
+                  'unit_price': i.unitPrice.toString(),
+                  'line_total': (i.unitPrice * i.quantity).toString(),
+                  'check_number': i.checkNumber,
+                })
+            .toList(),
       });
     }
 
@@ -295,6 +344,7 @@ class StaffAppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _healthTimer?.cancel();
     _eventSub?.cancel();
     super.dispose();
   }

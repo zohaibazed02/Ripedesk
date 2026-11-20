@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 class GpsPing {
@@ -85,5 +87,36 @@ class GpsTelemetryBuffer {
     final batch = _queue.sublist(0, count);
     _queue.removeRange(0, count);
     return batch;
+  }
+
+  /// Flushes up to 50 buffered pings to POST /api/v1/telemetry/gps/batch,
+  /// re-queueing at the front if the network request fails.
+  Future<int> flushToCloud({
+    required String cloudApiUrl,
+    required String authToken,
+    http.Client? httpClient,
+  }) async {
+    if (_queue.isEmpty) return 0;
+    final batch = takeBatch(maxBatch: 50);
+    final client = httpClient ?? http.Client();
+    try {
+      final res = await client
+          .post(
+            Uri.parse('$cloudApiUrl/api/v1/telemetry/gps/batch'),
+            headers: {
+              'Content-Type': 'application/json',
+              if (authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+            },
+            body: jsonEncode({'pings': batch.map((p) => p.toJson()).toList()}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return batch.length;
+      }
+    } catch (_) {
+      // Re-queue on network failure
+    }
+    _queue.insertAll(0, batch);
+    return 0;
   }
 }

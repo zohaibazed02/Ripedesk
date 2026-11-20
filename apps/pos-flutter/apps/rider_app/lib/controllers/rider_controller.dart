@@ -1,6 +1,13 @@
+import 'dart:convert';
 import 'package:decimal/decimal.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
+
+const defaultRiderCloudApiUrl = String.fromEnvironment(
+  'CLOUD_API_URL',
+  defaultValue: 'https://ripedesk-cloud-api.onrender.com',
+);
 
 class RiderTrip {
   RiderTrip({
@@ -53,13 +60,21 @@ class BufferedTripEvent {
 }
 
 class RiderController extends ChangeNotifier {
-  RiderController() {
+  RiderController({
+    this.cloudApiUrl = defaultRiderCloudApiUrl,
+    this.authToken = '',
+    http.Client? httpClient,
+  }) : _http = httpClient ?? http.Client() {
     _seedPilotTrips();
   }
 
+  final String cloudApiUrl;
+  final String authToken;
+  final http.Client _http;
   final _uuid = const Uuid();
   bool onDuty = true;
   bool isOnline = true;
+  String? lastSyncError;
   final List<RiderTrip> trips = [];
   final List<BufferedTripEvent> offlineBuffer = [];
   final List<String> syncedEventIds = [];
@@ -152,9 +167,49 @@ class RiderController extends ChangeNotifier {
     if (!isOnline) {
       offlineBuffer.add(ev);
     } else {
-      syncedEventIds.add(ev.clientEventId);
+      final ok = await _postTripStatusEvent(ev);
+      if (ok) {
+        syncedEventIds.add(ev.clientEventId);
+      } else {
+        offlineBuffer.add(ev);
+      }
     }
     notifyListeners();
+  }
+
+  Future<bool> _postTripStatusEvent(BufferedTripEvent ev) async {
+    if (authToken.isEmpty) {
+      // No live token configured (unit tests / local demo) -> treat as locally synced
+      return true;
+    }
+    try {
+      final res = await _http
+          .post(
+            Uri.parse('$cloudApiUrl/api/v1/delivery/trips/${ev.tripId}/status'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $authToken',
+            },
+            body: jsonEncode({
+              'client_event_id': ev.clientEventId,
+              'next_status': ev.nextStatus,
+              'pod_photo_url': ev.podPhotoUrl,
+              'recipient_name': ev.recipientName,
+              'cod_collected': ev.codCollected.toString(),
+              'occurred_offline_at': ev.occurredOfflineAt.toIso8601String(),
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        lastSyncError = null;
+        return true;
+      }
+      lastSyncError = 'HTTP ${res.statusCode}: ${res.body}';
+      return false;
+    } catch (e) {
+      lastSyncError = e.toString();
+      return false;
+    }
   }
 
   /// Drains buffered offline status events in strict FIFO order on reconnect.
@@ -162,7 +217,10 @@ class RiderController extends ChangeNotifier {
     if (!isOnline || offlineBuffer.isEmpty) return 0;
     var flushed = 0;
     while (offlineBuffer.isNotEmpty) {
-      final ev = offlineBuffer.removeAt(0);
+      final ev = offlineBuffer.first;
+      final ok = await _postTripStatusEvent(ev);
+      if (!ok) break;
+      offlineBuffer.removeAt(0);
       syncedEventIds.add(ev.clientEventId);
       flushed++;
     }

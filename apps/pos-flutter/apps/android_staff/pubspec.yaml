@@ -11,6 +11,7 @@ dependencies:
   decimal: ^3.0.2
   flutter:
     sdk: flutter
+  http: ^1.2.2
   pos_domain:
     path: ../../packages/pos_domain
   uuid: ^4.5.1

@@ -5,9 +5,14 @@ import 'screens/staff_pin_screen.dart';
 import 'screens/staff_tables_screen.dart';
 import 'theme/staff_theme.dart';
 
+const _defaultBranchLanUrl = String.fromEnvironment(
+  'BRANCH_LAN_URL',
+  defaultValue: 'http://192.168.1.10:8090',
+);
+
 void main() {
-  final lanClient = BranchLanClient(branchBaseUrl: 'http://192.168.1.10:8090');
-  final controller = StaffAppController(lanClient: lanClient);
+  final lanClient = BranchLanClient(branchBaseUrl: _defaultBranchLanUrl);
+  final controller = StaffAppController(lanClient: lanClient)..startHealthPolling();
   runApp(AndroidStaffApp(controller: controller));
 }
 

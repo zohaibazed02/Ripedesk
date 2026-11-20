@@ -128,11 +128,19 @@ class _TablesideOrderScreenState extends State<TablesideOrderScreen> {
                       onPressed: active.draftItems.isEmpty
                           ? null
                           : () async {
-                              await widget.controller.fireRoundToKitchen(widget.tableId);
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Round fired to Kitchen KDS!')),
-                                );
+                              try {
+                                await widget.controller.fireRoundToKitchen(widget.tableId);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Round fired to Kitchen KDS!')),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Failed to fire round: $e')),
+                                  );
+                                }
                               }
                             },
                       child: Text('Fire Round #${active.order.rounds.length + 1} to Kitchen'),
