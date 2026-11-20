@@ -278,6 +278,8 @@ func (p *Processor) CreateOrUpdateOrder(ctx context.Context, in CreateOrUpdateOr
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return nil, fmt.Errorf("commit order tx: %w", err)
 	}
+	// Release the single SQLite connection back to the pool BEFORE calling spooler (prevents MaxOpenConns(1) self-deadlock)
+	_ = conn.Close()
 
 	if p.publisher != nil {
 		p.publisher.PublishEvent(LANEvent{

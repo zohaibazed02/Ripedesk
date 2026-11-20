@@ -155,7 +155,9 @@ func (s *Server) handleTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleActiveOrders(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.DB().QueryContext(r.Context(), `
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	rows, err := s.store.DB().QueryContext(ctx, `
 		SELECT id, order_number, order_mode, COALESCE(table_id, ''), order_version, status, grand_total, created_offline_at
 		FROM local_orders
 		WHERE status IN ('open', 'in_prep', 'ready')
@@ -188,6 +190,8 @@ func (s *Server) handleActiveOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 	station := r.URL.Query().Get("station")
 	query := `
 		SELECT t.id, t.order_id, COALESCE(o.order_number, ''), COALESCE(o.order_mode, 'quick_sale'),
@@ -203,7 +207,7 @@ func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
 	}
 	query += ` ORDER BY t.created_at ASC`
 
-	rows, err := s.store.DB().QueryContext(r.Context(), query, args...)
+	rows, err := s.store.DB().QueryContext(ctx, query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

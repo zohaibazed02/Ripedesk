@@ -40,11 +40,19 @@ export default function KdsBoardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Connect to Branch LAN SSE with automatic 3s polling fallback + live ticket hydration
+  // Connect to Branch LAN SSE with automatic 2s safety polling + in-flight guard
   useEffect(() => {
+    let isFetching = false;
     const fetchLiveTickets = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       try {
-        const res = await fetch(`${DEFAULT_LAN_URL}/lan/kds/tickets`, { cache: "no-store" });
+        const res = await fetch(`${DEFAULT_LAN_URL}/lan/kds/tickets`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
         if (!res.ok) return;
         const data = (await res.json()) as {
           tickets?: Array<{
@@ -89,7 +97,10 @@ export default function KdsBoardPage() {
           setTickets(mapped);
         }
       } catch {
-        // Branch service unreachable — keep current state without injecting mock tickets
+        // Branch service unreachable or aborted — keep current state without injecting mock tickets
+      } finally {
+        clearTimeout(timeoutId);
+        isFetching = false;
       }
     };
 
@@ -108,16 +119,17 @@ export default function KdsBoardPage() {
 
     void fetchBranchInfo();
     void fetchLiveTickets();
-    const pollId = setInterval(() => void fetchLiveTickets(), 3000);
+    const pollId = setInterval(() => void fetchLiveTickets(), 2000);
 
     const client = new KdsLanClient();
     clientRef.current = client;
     const disconnect = client.connect({
       onStateChange: setConnectionState,
       onLanEvent: (_seq, eventType, payload) => {
-        if (eventType === "order.upserted") {
+        if (eventType === "order.upserted" || eventType === "kds.ticket_updated") {
           void fetchLiveTickets();
-        } else if (eventType === "kds.ticket_updated" && typeof payload.ticket_id === "string") {
+        }
+        if (eventType === "kds.ticket_updated" && typeof payload.ticket_id === "string") {
           setTickets((prev) =>
             prev.map((t) =>
               t.id === payload.ticket_id

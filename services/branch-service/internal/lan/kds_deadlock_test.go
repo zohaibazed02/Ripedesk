@@ -204,3 +204,49 @@ func TestWindowsPosOrderPayload_AppearsOnKDSTickets(t *testing.T) {
 		t.Fatalf("unexpected KDS ticket: %+v", tk)
 	}
 }
+
+func TestSpoolerEnabledOrderPost_NoSelfDeadlockAndFastHealthz(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "spooler_deadlock.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer store.Close()
+
+	hub := NewHub()
+	proc := commands.NewProcessor(store, noopPublisher{})
+	sp := spooler.NewSpooler(store)
+	proc.SetSpooler(sp) // Matches cmd/branch/main.go!
+	srv := NewServer(":0", store, hub, proc, sp)
+
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/lan/stream", nil).WithContext(sseCtx)
+		srv.httpSrv.Handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	rawPayload := `{"order_id":"ord-sp-1","tenant_id":"tn-1","branch_id":"br-f7","order_number":"F7-777","order_mode":"quick_sale","expected_version":0,"subtotal":"500","tax_total":"80","discount_total":"0","grand_total":"580","idempotency_key":"idem-sp-1","items":[{"menu_item_id":"m1","item_name":"Latte","prep_station":"barista","quantity":"1","unit_price":"500","line_total":"500","check_number":1}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/lan/commands/orders", bytes.NewBufferString(rawPayload)).WithContext(ctx)
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	srv.httpSrv.Handler.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST /lan/commands/orders with spooler enabled failed: status=%d body=%s", postRec.Code, postRec.Body.String())
+	}
+
+	for i := 0; i < 20; i++ {
+		hRec := httptest.NewRecorder()
+		srv.httpSrv.Handler.ServeHTTP(hRec, httptest.NewRequest(http.MethodGet, "/healthz", nil).WithContext(ctx))
+		if hRec.Code != http.StatusOK {
+			t.Fatalf("healthz %d failed: %d %s", i, hRec.Code, hRec.Body.String())
+		}
+		kRec := httptest.NewRecorder()
+		srv.httpSrv.Handler.ServeHTTP(kRec, httptest.NewRequest(http.MethodGet, "/lan/kds/tickets", nil).WithContext(ctx))
+		if kRec.Code != http.StatusOK {
+			t.Fatalf("kds tickets %d failed: %d %s", i, kRec.Code, kRec.Body.String())
+		}
+	}
+}

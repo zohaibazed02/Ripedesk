@@ -191,20 +191,34 @@ export class KdsLanClient {
       };
 
       const handleSseMessage = (msg: MessageEvent) => {
+        console.debug("[KDS SSE]", msg.type, msg.data);
+        let seqId = 0;
+        let eventType = msg.type && msg.type !== "message" ? msg.type : "";
+        let parsedPayload: Record<string, unknown> = {};
         try {
           const ev = JSON.parse(msg.data) as {
             seq_id?: number;
             event_type?: string;
+            type?: string;
             payload_json?: string;
           };
-          if (ev.seq_id && ev.seq_id > this.latestLanSeq) {
-            this.latestLanSeq = ev.seq_id;
+          seqId = ev.seq_id ?? 0;
+          if (seqId > this.latestLanSeq) {
+            this.latestLanSeq = seqId;
           }
-          if (ev.event_type && ev.payload_json) {
-            callbacks.onLanEvent(ev.seq_id ?? 0, ev.event_type, JSON.parse(ev.payload_json));
+          eventType = ev.event_type || ev.type || eventType;
+          if (ev.payload_json) {
+            try {
+              parsedPayload = JSON.parse(ev.payload_json) as Record<string, unknown>;
+            } catch {
+              parsedPayload = {};
+            }
           }
         } catch {
-          // Keep-alive or non-JSON frame
+          // Even if JSON parse fails on a named event, still dispatch by msg.type
+        }
+        if (eventType) {
+          callbacks.onLanEvent(seqId, eventType, parsedPayload);
         }
       };
 
