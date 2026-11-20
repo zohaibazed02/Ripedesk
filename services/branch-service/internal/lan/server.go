@@ -224,28 +224,33 @@ func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
 		var tk ticketRow
 		if err := rows.Scan(&tk.ID, &tk.OrderID, &tk.OrderNumber, &tk.OrderMode, &tk.RoundID, &tk.PrepStation, &tk.Status, &tk.CreatedAt); err == nil {
 			tk.Station = tk.PrepStation
-			itemRows, iErr := s.store.DB().QueryContext(r.Context(), `
-				SELECT item_name, quantity FROM local_order_items
-				WHERE order_id = ? AND prep_station = ?
-			`, tk.OrderID, tk.PrepStation)
-			type itemSummary struct {
-				ItemName string `json:"item_name"`
-				Quantity string `json:"quantity"`
-			}
-			items := make([]itemSummary, 0)
-			if iErr == nil {
-				for itemRows.Next() {
-					var it itemSummary
-					if err := itemRows.Scan(&it.ItemName, &it.Quantity); err == nil {
-						items = append(items, it)
-					}
-				}
-				itemRows.Close()
-			}
-			if b, err := json.Marshal(items); err == nil {
-				tk.ItemsJSON = string(b)
-			}
 			tickets = append(tickets, tk)
+		}
+	}
+	// Explicitly close outer rows BEFORE running secondary queries (SQLite MaxOpenConns(1))
+	rows.Close()
+
+	type itemSummary struct {
+		ItemName string `json:"item_name"`
+		Quantity string `json:"quantity"`
+	}
+	for i := range tickets {
+		itemRows, iErr := s.store.DB().QueryContext(r.Context(), `
+			SELECT item_name, quantity FROM local_order_items
+			WHERE order_id = ? AND prep_station = ?
+		`, tickets[i].OrderID, tickets[i].PrepStation)
+		items := make([]itemSummary, 0)
+		if iErr == nil {
+			for itemRows.Next() {
+				var it itemSummary
+				if err := itemRows.Scan(&it.ItemName, &it.Quantity); err == nil {
+					items = append(items, it)
+				}
+			}
+			itemRows.Close()
+		}
+		if b, err := json.Marshal(items); err == nil {
+			tickets[i].ItemsJSON = string(b)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": tickets})
