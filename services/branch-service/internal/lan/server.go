@@ -266,6 +266,7 @@ func (s *Server) handleOrderCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order payload: " + err.Error()})
 		return
 	}
+	slog.Info("lan_order_received", "order_id", in.OrderID, "order_number", in.OrderNumber, "items", len(in.Items))
 	res, err := s.processor.CreateOrUpdateOrder(r.Context(), in)
 	if err != nil {
 		slog.Error("lan_order_command_failed", "order_id", in.OrderID, "order_number", in.OrderNumber, "error", err)
@@ -276,6 +277,7 @@ func (s *Server) handleOrderCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	slog.Info("lan_order_committed", "order_id", in.OrderID, "order_number", in.OrderNumber, "tickets", len(res.TicketIDs), "lan_seq_id", res.LANSeqID)
 	writeJSON(w, http.StatusOK, res)
 }
 

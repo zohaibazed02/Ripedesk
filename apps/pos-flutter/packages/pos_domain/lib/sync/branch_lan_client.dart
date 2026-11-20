@@ -64,10 +64,12 @@ class BranchLanClient {
     required this.branchBaseUrl,
     this.isolatedModeEnabled = false,
     http.Client? httpClient,
-  }) : _client = httpClient ?? http.Client();
+  })  : _injectedClient = httpClient,
+        _client = httpClient ?? http.Client();
 
   final String branchBaseUrl;
   final bool isolatedModeEnabled;
+  final http.Client? _injectedClient;
   final http.Client _client;
 
   ConnectionMode _mode = ConnectionMode.lanOfflineInternet;
@@ -133,18 +135,30 @@ class BranchLanClient {
     String path,
     Map<String, dynamic> payload,
   ) async {
-    final resp = await _client
-        .post(
-          Uri.parse('$branchBaseUrl$path'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 5));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode >= 400) {
-      throw Exception('LAN command $path failed (${resp.statusCode}): ${body['error'] ?? resp.body}');
+    // Use a dedicated short-lived client with Connection: close on live runs
+    // so Windows keep-alive / SSE socket pooling never stalls command POSTs.
+    final cmdClient = _injectedClient ?? http.Client();
+    try {
+      final resp = await cmdClient
+          .post(
+            Uri.parse('$branchBaseUrl$path'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Connection': 'close',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 5));
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (resp.statusCode >= 400) {
+        throw Exception('LAN command $path failed (${resp.statusCode}): ${body['error'] ?? resp.body}');
+      }
+      return body;
+    } finally {
+      if (_injectedClient == null) {
+        cmdClient.close();
+      }
     }
-    return body;
   }
 
   Future<List<LanStreamEvent>> catchUpEvents({int? sinceSeq}) async {
