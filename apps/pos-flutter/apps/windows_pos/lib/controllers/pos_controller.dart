@@ -258,7 +258,7 @@ class PosController extends ChangeNotifier {
       final lineTotal = unit * i.quantity;
       return {
         'menu_item_id': i.menuItemId,
-        'item_name': i.name,
+        'item_name': i.itemName,
         'prep_station': i.prepStation,
         'quantity': i.quantity.toString(),
         'unit_price': unit.toString(),
