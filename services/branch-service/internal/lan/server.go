@@ -187,16 +187,18 @@ func (s *Server) handleActiveOrders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
 	station := r.URL.Query().Get("station")
 	query := `
-		SELECT id, order_id, order_round_id, prep_station, status, created_at
-		FROM local_kitchen_tickets
-		WHERE status IN ('queued', 'preparing', 'recalled')
+		SELECT t.id, t.order_id, COALESCE(o.order_number, ''), COALESCE(o.order_mode, 'quick_sale'),
+		       t.order_round_id, t.prep_station, t.status, t.created_at
+		FROM local_kitchen_tickets t
+		LEFT JOIN local_orders o ON o.id = t.order_id
+		WHERE t.status IN ('queued', 'preparing', 'recalled')
 	`
 	var args []any
 	if station != "" && station != "all" {
-		query += ` AND prep_station = ?`
+		query += ` AND t.prep_station = ?`
 		args = append(args, station)
 	}
-	query += ` ORDER BY created_at ASC`
+	query += ` ORDER BY t.created_at ASC`
 
 	rows, err := s.store.DB().QueryContext(r.Context(), query, args...)
 	if err != nil {
@@ -208,15 +210,41 @@ func (s *Server) handleKDSTickets(w http.ResponseWriter, r *http.Request) {
 	type ticketRow struct {
 		ID          string `json:"id"`
 		OrderID     string `json:"order_id"`
+		OrderNumber string `json:"order_number"`
+		OrderMode   string `json:"order_mode"`
 		RoundID     string `json:"order_round_id"`
+		Station     string `json:"station"`
 		PrepStation string `json:"prep_station"`
 		Status      string `json:"status"`
 		CreatedAt   string `json:"created_at"`
+		ItemsJSON   string `json:"items_json"`
 	}
-	var tickets []ticketRow
+	tickets := make([]ticketRow, 0)
 	for rows.Next() {
 		var tk ticketRow
-		if err := rows.Scan(&tk.ID, &tk.OrderID, &tk.RoundID, &tk.PrepStation, &tk.Status, &tk.CreatedAt); err == nil {
+		if err := rows.Scan(&tk.ID, &tk.OrderID, &tk.OrderNumber, &tk.OrderMode, &tk.RoundID, &tk.PrepStation, &tk.Status, &tk.CreatedAt); err == nil {
+			tk.Station = tk.PrepStation
+			itemRows, iErr := s.store.DB().QueryContext(r.Context(), `
+				SELECT item_name, quantity FROM local_order_items
+				WHERE order_id = ? AND prep_station = ?
+			`, tk.OrderID, tk.PrepStation)
+			type itemSummary struct {
+				ItemName string `json:"item_name"`
+				Quantity string `json:"quantity"`
+			}
+			items := make([]itemSummary, 0)
+			if iErr == nil {
+				for itemRows.Next() {
+					var it itemSummary
+					if err := itemRows.Scan(&it.ItemName, &it.Quantity); err == nil {
+						items = append(items, it)
+					}
+				}
+				itemRows.Close()
+			}
+			if b, err := json.Marshal(items); err == nil {
+				tk.ItemsJSON = string(b)
+			}
 			tickets = append(tickets, tk)
 		}
 	}

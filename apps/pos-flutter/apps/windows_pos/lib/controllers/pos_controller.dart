@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:decimal/decimal.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:http/http.dart' as http;
@@ -133,10 +134,16 @@ class PosController extends ChangeNotifier {
       sw.stop();
       if (res.statusCode >= 200 && res.statusCode < 300) {
         lanLatencyMs = sw.elapsedMilliseconds;
-        if (connectionMode != ConnectionMode.online) {
-          connectionMode = ConnectionMode.online;
-          notifyListeners();
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        final cloudReachable = body['cloud_reachable'] as bool? ?? false;
+        pendingOutboxCount = body['pending_outbox_count'] as int? ?? 0;
+        final nextMode = cloudReachable
+            ? ConnectionMode.cloudConnected
+            : ConnectionMode.lanOfflineInternet;
+        if (connectionMode != nextMode) {
+          connectionMode = nextMode;
         }
+        notifyListeners();
         return;
       }
     } catch (_) {
@@ -245,6 +252,22 @@ class PosController extends ChangeNotifier {
     notifyListeners();
   }
 
+  List<Map<String, dynamic>> _wireOrderItems() {
+    return cart.map((i) {
+      final unit = i.unitPrice;
+      final lineTotal = unit * i.quantity;
+      return {
+        'menu_item_id': i.menuItemId,
+        'item_name': i.name,
+        'prep_station': i.prepStation,
+        'quantity': i.quantity.toString(),
+        'unit_price': unit.toString(),
+        'line_total': lineTotal.toString(),
+        'check_number': 1,
+      };
+    }).toList();
+  }
+
   Future<String> sendToBarista() async {
     final orderId = _uuid.v4();
     final orderNumber = '${branch.branchCode}-${_orderSeq++}';
@@ -261,12 +284,12 @@ class PosController extends ChangeNotifier {
         'discount_total': totals.discountTotal.toString(),
         'grand_total': totals.grandTotal.toString(),
         'idempotency_key': 'cmd-$orderId',
-        'items': cart.map((i) => i.toJson()).toList(),
+        'items': _wireOrderItems(),
       });
     } else {
       pendingOutboxCount++;
     }
-    notifyListeners();
+    clearCart();
     return orderNumber;
   }
 
@@ -295,7 +318,7 @@ class PosController extends ChangeNotifier {
         'discount_total': currentTotals.discountTotal.toString(),
         'grand_total': grand.toString(),
         'idempotency_key': 'cmd-$orderId',
-        'items': cart.map((i) => i.toJson()).toList(),
+        'items': _wireOrderItems(),
       });
       await lanClient!.postCommand('/lan/commands/payments', {
         'payment_id': paymentId,
