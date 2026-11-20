@@ -2,6 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import {
+  OWNER_TOKEN_STORAGE_KEY,
+  OwnerAuthModal,
+} from "../components/OwnerAuthModal";
 
 const CLOUD_API_URL =
   process.env.NEXT_PUBLIC_CLOUD_API_URL || "http://localhost:8080";
@@ -107,17 +111,29 @@ export default function OwnerDashboardPage() {
   const [activeTab, setActiveTab] = useState<NavTab>("overview");
   const [simulateStale, setSimulateStale] = useState(false);
   const [apiOffline, setApiOffline] = useState(false);
+  const [authToken, setAuthToken] = useState<string>("");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  useEffect(() => {
+    const saved =
+      localStorage.getItem(OWNER_TOKEN_STORAGE_KEY) ||
+      localStorage.getItem("owner_access_token") ||
+      "";
+    if (saved) setAuthToken(saved);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("owner_access_token") || "" : "";
-    const headers: Record<string, string> = token
-      ? { Authorization: `Bearer ${token}` }
+    const headers: Record<string, string> = authToken
+      ? { Authorization: `Bearer ${authToken}` }
       : {};
     const today = new Date().toISOString().slice(0, 10);
 
     async function fetchLiveReports() {
+      if (!authToken) {
+        if (active) setApiOffline(true);
+        return;
+      }
       try {
         const [sumRes, compRes] = await Promise.all([
           fetch(`${CLOUD_API_URL}/api/v1/reports/owner/summary?from=${today}&to=${today}`, {
@@ -139,7 +155,7 @@ export default function OwnerDashboardPage() {
     return () => {
       active = false;
     };
-  }, [period, branchFilter]);
+  }, [period, branchFilter, authToken]);
 
   const mult = PERIOD_MULTIPLIER[period];
 
@@ -356,14 +372,51 @@ export default function OwnerDashboardPage() {
             >
               {dark ? "Daylight" : "Dark"}
             </button>
+
+            {authToken ? (
+              <button
+                onClick={() => {
+                  localStorage.removeItem(OWNER_TOKEN_STORAGE_KEY);
+                  setAuthToken("");
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-zinc-700 bg-zinc-900 text-zinc-300 hover:text-white"
+              >
+                Sign Out
+              </button>
+            ) : (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500"
+              >
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </header>
 
+      <OwnerAuthModal
+        open={authModalOpen}
+        cloudApiUrl={CLOUD_API_URL}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthenticated={(token) => setAuthToken(token)}
+      />
+
       <main className="mx-auto max-w-6xl px-4 py-5 space-y-5">
         {apiOffline && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-300">
-            Live Owner Reporting API ({CLOUD_API_URL}) is unreachable or unauthenticated — displaying cached snapshot.
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-300">
+            <span>
+              Live Owner Reporting API ({CLOUD_API_URL}) is{" "}
+              {authToken ? "unreachable" : "unauthenticated"} — displaying cached snapshot.
+            </span>
+            {!authToken && (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="rounded-md bg-amber-500/20 px-2.5 py-1 font-semibold text-amber-200 hover:bg-amber-500/30"
+              >
+                Sign In Now →
+              </button>
+            )}
           </div>
         )}
         {/* Controls Bar: Period Selector + Branch Filter */}

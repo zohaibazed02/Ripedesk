@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { OWNER_TOKEN_STORAGE_KEY } from "../../components/OwnerAuthModal";
 
 const CLOUD_API_URL =
   process.env.NEXT_PUBLIC_CLOUD_API_URL || "http://localhost:8080";
@@ -198,7 +199,11 @@ export default function OwnerAIAnalystPage() {
     setApiNotice(null);
     const today = new Date().toISOString().slice(0, 10);
     const token =
-      typeof window !== "undefined" ? localStorage.getItem("owner_access_token") || "" : "";
+      typeof window !== "undefined"
+        ? localStorage.getItem(OWNER_TOKEN_STORAGE_KEY) ||
+          localStorage.getItem("owner_access_token") ||
+          ""
+        : "";
     try {
       const res = await fetch(`${CLOUD_API_URL}/api/v1/ai/ask`, {
         method: "POST",
