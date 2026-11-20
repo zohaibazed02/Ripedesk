@@ -190,7 +190,7 @@ export class KdsLanClient {
         startPolling();
       };
 
-      es.onmessage = (msg) => {
+      const handleSseMessage = (msg: MessageEvent) => {
         try {
           const ev = JSON.parse(msg.data) as {
             seq_id?: number;
@@ -207,6 +207,11 @@ export class KdsLanClient {
           // Keep-alive or non-JSON frame
         }
       };
+
+      es.onmessage = handleSseMessage;
+      es.addEventListener("order.upserted", handleSseMessage as EventListener);
+      es.addEventListener("kds.ticket_updated", handleSseMessage as EventListener);
+      es.addEventListener("payment.recorded", handleSseMessage as EventListener);
     } catch {
       callbacks.onStateChange("demo_mode");
     }

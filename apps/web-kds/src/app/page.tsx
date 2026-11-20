@@ -64,15 +64,19 @@ export default function KdsBoardPage() {
             } catch {
               parsedItems = [];
             }
-            const st = (t.station || "barista") as KdsTicket["station"];
+            const rawStation = (t.station || "barista").toLowerCase();
+            const normalizedStation: KdsTicket["station"] =
+              rawStation === "pastry"
+                ? "cold_prep"
+                : ["barista", "hot_kitchen", "cold_prep", "expediter"].includes(rawStation)
+                  ? (rawStation as KdsTicket["station"])
+                  : "barista";
             return {
               id: t.id,
               orderNumber: t.order_number || t.id.slice(0, 8),
               orderMode: "QUICK_SALE",
               roundNumber: 1,
-              station: ["barista", "hot_kitchen", "cold_prep", "expediter"].includes(st)
-                ? st
-                : "barista",
+              station: normalizedStation,
               status: (t.status as KdsTicket["status"]) || "queued",
               createdAtMs: t.created_at ? Date.parse(t.created_at) || Date.now() : Date.now(),
               items: parsedItems.map((it, i) => ({
@@ -127,7 +131,17 @@ export default function KdsBoardPage() {
         }
       },
     });
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") {
+        void fetchLiveTickets();
+      }
+    };
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+
     return () => {
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
       clearInterval(pollId);
       disconnect();
     };
