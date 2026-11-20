@@ -4,6 +4,7 @@ import React from "react";
 import type { KdsConnectionState, KdsStation } from "../lib/kds-client";
 
 interface KdsHeaderProps {
+  branchLabel: string;
   activeStation: KdsStation;
   onSelectStation: (station: KdsStation) => void;
   countsByStation: Record<KdsStation, number>;
@@ -22,6 +23,7 @@ const STATIONS: Array<{ id: KdsStation; label: string; keyHint: string }> = [
 ];
 
 export function KdsHeader({
+  branchLabel,
   activeStation,
   onSelectStation,
   countsByStation,
@@ -63,7 +65,7 @@ export function KdsHeader({
                 Kitchen Display
               </p>
               <p className="font-mono text-[10px] text-zinc-400">
-                G-9 Flagship · LAN
+                {branchLabel} · LAN
               </p>
             </div>
           </div>

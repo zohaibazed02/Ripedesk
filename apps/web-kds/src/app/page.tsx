@@ -14,8 +14,9 @@ import {
 
 export default function KdsBoardPage() {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [tickets, setTickets] = useState<KdsTicket[]>(() =>
-    createPilotTickets(Date.now())
+  const [tickets, setTickets] = useState<KdsTicket[]>([]);
+  const [branchLabel, setBranchLabel] = useState<string>(
+    process.env.NEXT_PUBLIC_BRANCH_NAME || "Branch LAN"
   );
   const [activeStation, setActiveStation] = useState<KdsStation>("all");
   const [connectionState, setConnectionState] =
@@ -24,6 +25,13 @@ export default function KdsBoardPage() {
 
   const clientRef = useRef<KdsLanClient | null>(null);
   const simCounterRef = useRef(500);
+
+  // Opt-in demo tickets ONLY when ?demo=1 is explicitly in the URL
+  useEffect(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1") {
+      setTickets(createPilotTickets(Date.now()));
+    }
+  }, []);
 
   // 1-second SLA timer tick
   useEffect(() => {
@@ -47,7 +55,7 @@ export default function KdsBoardPage() {
             items_json?: string;
           }>;
         };
-        if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+        if (Array.isArray(data.tickets)) {
           const mapped: KdsTicket[] = data.tickets.map((t) => {
             let parsedItems: Array<{ item_name?: string; name?: string; quantity?: string | number }> = [];
             try {
@@ -76,10 +84,24 @@ export default function KdsBoardPage() {
           setTickets(mapped);
         }
       } catch {
-        // Keep current/demo tickets if branch-service is not yet running
+        // Branch service unreachable — keep current state without injecting mock tickets
       }
     };
 
+    const fetchBranchInfo = async () => {
+      try {
+        const res = await fetch(`${DEFAULT_LAN_URL}/healthz`, { cache: "no-store" });
+        if (!res.ok) return;
+        const h = (await res.json()) as { branch_id?: string };
+        if (h.branch_id && !process.env.NEXT_PUBLIC_BRANCH_NAME) {
+          setBranchLabel(`Branch ${h.branch_id.slice(0, 8)}`);
+        }
+      } catch {
+        // Ignore if unreachable
+      }
+    };
+
+    void fetchBranchInfo();
     void fetchLiveTickets();
     const pollId = setInterval(() => void fetchLiveTickets(), 3000);
 
@@ -228,6 +250,7 @@ export default function KdsBoardPage() {
   return (
     <div className="min-h-screen bg-[#09090B] text-zinc-100">
       <KdsHeader
+        branchLabel={branchLabel}
         activeStation={activeStation}
         onSelectStation={setActiveStation}
         countsByStation={countsByStation}
