@@ -38,11 +38,25 @@ jobs:
       - working-directory: apps/pos-flutter/apps/android_staff
         run: |
           if [ ! -d android ]; then flutter create . --platforms=android; fi
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
+          fi
+          if ! grep -q 'usesCleartextTraffic' "$MANIFEST"; then
+            sed -i 's|<application |<application android:usesCleartextTraffic="true" |' "$MANIFEST"
+          fi
           flutter pub get
           flutter build apk --release
       - working-directory: apps/pos-flutter/apps/rider_app
         run: |
           if [ ! -d android ]; then flutter create . --platforms=android; fi
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
+          fi
+          if ! grep -q 'usesCleartextTraffic' "$MANIFEST"; then
+            sed -i 's|<application |<application android:usesCleartextTraffic="true" |' "$MANIFEST"
+          fi
           flutter pub get
           flutter build apk --release
       - uses: actions/upload-artifact@v4
