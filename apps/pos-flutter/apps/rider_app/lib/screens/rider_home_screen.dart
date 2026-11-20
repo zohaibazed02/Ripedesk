@@ -13,6 +13,45 @@ class RiderHomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Rider Dispatch', style: TextStyle(fontWeight: FontWeight.w800)),
         actions: [
+          IconButton(
+            tooltip: 'Rider Auth / Token',
+            onPressed: () {
+              final tokenCtrl = TextEditingController(text: controller.authToken);
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Rider Cloud Auth'),
+                  content: TextField(
+                    controller: tokenCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Bearer JWT Token',
+                      hintText: 'eyJhbGciOiJIUzI1NiIs...',
+                    ),
+                    maxLines: 3,
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        controller.updateAuthToken(tokenCtrl.text);
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Rider auth token saved')),
+                        );
+                      },
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            icon: Icon(
+              controller.authToken.isEmpty ? Icons.vpn_key_outlined : Icons.verified_user,
+            ),
+          ),
           Switch(
             value: controller.onDuty,
             onChanged: (_) => controller.toggleDuty(),
@@ -31,6 +70,21 @@ class RiderHomeScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Sync Error Banner
+          if (controller.lastSyncError != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'Sync Error: ${controller.lastSyncError}',
+                style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+
           // Connectivity & Offline Buffer Status Bar
           if (!controller.isOnline || controller.offlineBuffer.isNotEmpty)
             Container(

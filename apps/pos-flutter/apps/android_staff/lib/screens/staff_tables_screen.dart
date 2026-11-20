@@ -38,6 +38,44 @@ class StaffTablesScreen extends StatelessWidget {
         ),
         actions: [
           IconButton(
+            tooltip: 'Branch LAN URL',
+            onPressed: () {
+              final urlCtrl = TextEditingController(
+                text: controller.lanClient?.branchBaseUrl ?? 'http://192.168.1.10:8090',
+              );
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Branch LAN Server'),
+                  content: TextField(
+                    controller: urlCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Branch PC URL',
+                      hintText: 'http://192.168.1.10:8090',
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        controller.updateLanUrl(urlCtrl.text);
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('LAN URL updated to ${urlCtrl.text.trim()}')),
+                        );
+                      },
+                      child: const Text('Connect'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings_ethernet),
+          ),
+          IconButton(
             tooltip: 'Toggle Theme',
             onPressed: controller.toggleTheme,
             icon: Icon(controller.isDarkMode ? Icons.light_mode : Icons.dark_mode),

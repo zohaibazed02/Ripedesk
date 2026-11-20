@@ -45,9 +45,19 @@ class StaffAppController extends ChangeNotifier {
     _eventSub = lanClient?.eventStream.listen(_handleLanEvent);
   }
 
-  final BranchLanClient? lanClient;
+  BranchLanClient? lanClient;
   final _uuid = const Uuid();
   StreamSubscription<LanStreamEvent>? _eventSub;
+
+  void updateLanUrl(String nextUrl) {
+    final clean = nextUrl.trim().replaceAll(RegExp(r'/$'), '');
+    if (clean.isEmpty) return;
+    _eventSub?.cancel();
+    lanClient = BranchLanClient(branchBaseUrl: clean);
+    _eventSub = lanClient!.eventStream.listen(_handleLanEvent);
+    checkLanHealth();
+    notifyListeners();
+  }
 
   final String branchName = 'G-9 Flagship Dine-In';
   final String currencyCode = 'PKR';

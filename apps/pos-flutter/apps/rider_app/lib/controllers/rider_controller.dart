@@ -69,8 +69,48 @@ class RiderController extends ChangeNotifier {
   }
 
   final String cloudApiUrl;
-  final String authToken;
+  String authToken;
   final http.Client _http;
+
+  void updateAuthToken(String token) {
+    authToken = token.trim().replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '');
+    lastSyncError = null;
+    notifyListeners();
+    if (authToken.isNotEmpty) {
+      flushBufferedEvents();
+    }
+  }
+
+  Future<String?> loginWithPassword({
+    required String tenantSlug,
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final res = await _http
+          .post(
+            Uri.parse('$cloudApiUrl/api/v1/auth/login'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'tenant_slug': tenantSlug.trim(),
+              'email': email.trim(),
+              'password': password,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final data = body['data'] as Map<String, dynamic>?;
+      final token = data?['access_token'] as String?;
+      if (res.statusCode >= 200 && res.statusCode < 300 && token != null && token.isNotEmpty) {
+        updateAuthToken(token);
+        return null;
+      }
+      final err = (body['error'] as Map<String, dynamic>?)?['message'] as String?;
+      return err ?? 'Login failed (HTTP ${res.statusCode})';
+    } catch (e) {
+      return e.toString();
+    }
+  }
   final _uuid = const Uuid();
   bool onDuty = true;
   bool isOnline = true;
