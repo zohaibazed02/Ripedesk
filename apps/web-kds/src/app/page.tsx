@@ -22,6 +22,7 @@ export default function KdsBoardPage() {
   const [connectionState, setConnectionState] =
     useState<KdsConnectionState>("demo_mode");
   const [recallOpen, setRecallOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const clientRef = useRef<KdsLanClient | null>(null);
   const simCounterRef = useRef(500);
@@ -194,6 +195,17 @@ export default function KdsBoardPage() {
     );
   }
 
+  async function persistTicketStatus(
+    ticketId: string,
+    status: "preparing" | "bumped" | "recalled"
+  ) {
+    setActionError(null);
+    const res = await clientRef.current?.bumpTicket(ticketId, status);
+    if (res && !res.ok) {
+      setActionError(res.error || "Failed to update ticket on Branch LAN");
+    }
+  }
+
   function handleStartPrep(ticketId: string) {
     setTickets((prev) =>
       prev.map((t) =>
@@ -202,7 +214,7 @@ export default function KdsBoardPage() {
           : t
       )
     );
-    void clientRef.current?.bumpTicket(ticketId, "preparing");
+    void persistTicketStatus(ticketId, "preparing");
   }
 
   function handleBumpReady(ticketId: string) {
@@ -213,7 +225,7 @@ export default function KdsBoardPage() {
           : t
       )
     );
-    void clientRef.current?.bumpTicket(ticketId, "bumped");
+    void persistTicketStatus(ticketId, "bumped");
   }
 
   function handleRecall(ticketId: string) {
@@ -222,7 +234,7 @@ export default function KdsBoardPage() {
         t.id === ticketId ? { ...t, status: "recalled" } : t
       )
     );
-    void clientRef.current?.bumpTicket(ticketId, "recalled");
+    void persistTicketStatus(ticketId, "recalled");
   }
 
   function handleSimulateTicket() {
@@ -259,6 +271,19 @@ export default function KdsBoardPage() {
         onOpenRecall={() => setRecallOpen(true)}
         onSimulateTicket={handleSimulateTicket}
       />
+
+      {actionError && (
+        <div className="mx-4 mt-3 flex items-center justify-between rounded-lg border border-rose-500/40 bg-rose-500/15 px-3.5 py-2 text-xs text-rose-200">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="ml-3 rounded bg-rose-500/20 px-2 py-0.5 font-semibold hover:bg-rose-500/30"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <main className="p-4">
         {visibleTickets.length === 0 ? (

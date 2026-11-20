@@ -223,9 +223,15 @@ export class KdsLanClient {
     };
   }
 
-  async bumpTicket(ticketId: string, status: Exclude<TicketStatus, "queued">): Promise<void> {
+  async bumpTicket(
+    ticketId: string,
+    status: Exclude<TicketStatus, "queued">
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (ticketId.startsWith("tk-sim-")) {
+      return { ok: true };
+    }
     try {
-      await fetch(`${this.baseUrl}/lan/commands/kds/bump`, {
+      const resp = await fetch(`${this.baseUrl}/lan/commands/kds/bump`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -234,8 +240,16 @@ export class KdsLanClient {
           idempotency_key: `kds-${ticketId}-${status}-${Date.now()}`,
         }),
       });
-    } catch {
-      // Demo / offline local state handles optimistic update cleanly
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        return { ok: false, error: `Branch LAN rejected update (HTTP ${resp.status}): ${text.slice(0, 120)}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Branch LAN unreachable",
+      };
     }
   }
 }
