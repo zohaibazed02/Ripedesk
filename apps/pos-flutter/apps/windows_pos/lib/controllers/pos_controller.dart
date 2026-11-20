@@ -147,10 +147,10 @@ class PosController extends ChangeNotifier {
         return;
       }
     } catch (_) {
-      // Unreachable — stay in LAN offline fallback mode
+      // Branch LAN is unreachable
     }
-    if (connectionMode != ConnectionMode.lanOfflineInternet) {
-      connectionMode = ConnectionMode.lanOfflineInternet;
+    if (connectionMode != ConnectionMode.isolatedTerminal) {
+      connectionMode = ConnectionMode.isolatedTerminal;
       notifyListeners();
     }
   }

@@ -137,10 +137,13 @@ class PosTopBar extends StatelessWidget {
           const SizedBox(width: 12),
 
           // Live Sync Status Badge
-          _SyncPill(
-            mode: controller.connectionMode,
-            pendingCount: controller.pendingOutboxCount,
-            latencyMs: controller.lanLatencyMs,
+          ListenableBuilder(
+            listenable: controller,
+            builder: (_, __) => _SyncPill(
+              mode: controller.connectionMode,
+              pendingCount: controller.pendingOutboxCount,
+              latencyMs: controller.lanLatencyMs,
+            ),
           ),
           const SizedBox(width: 10),
 
@@ -189,10 +192,13 @@ class _SyncPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (mode) {
-      ConnectionMode.cloudConnected => ('Online • Synced', PosColors.emerald),
-      ConnectionMode.lanOfflineInternet => ('LAN Mode • Offline', PosColors.amber),
-      ConnectionMode.isolatedTerminal => ('Isolated Counter', PosColors.rose),
+      ConnectionMode.cloudConnected => ('Online · Cloud Synced', PosColors.emerald),
+      ConnectionMode.lanOfflineInternet => ('LAN Mode · Offline', PosColors.amber),
+      ConnectionMode.isolatedTerminal => ('Offline · LAN Unreachable', PosColors.rose),
     };
+    final suffix = mode == ConnectionMode.isolatedTerminal
+        ? (pendingCount > 0 ? ' · $pendingCount queued' : '')
+        : ' · ${latencyMs}ms${pendingCount > 0 ? " · $pendingCount queued" : ""}';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -211,7 +217,7 @@ class _SyncPill extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            '$label · ${latencyMs}ms${pendingCount > 0 ? " · $pendingCount queued" : ""}',
+            '$label$suffix',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
