@@ -177,7 +177,8 @@ func (h *Handler) GetBranchComparison(w http.ResponseWriter, r *http.Request) {
 				b.name,
 				b.code,
 				b.branch_type,
-				COALESCE(b.last_heartbeat_at, b.updated_at),
+				COALESCE(b.last_sync_at, b.updated_at),
+				b.pending_sync_count,
 				COALESCE(SUM(CASE WHEN o.created_at >= $1 AND o.created_at < $2 THEN o.subtotal - o.discount_total ELSE 0 END), 0),
 				COALESCE(SUM(CASE WHEN o.created_at >= $3 AND o.created_at < $4 THEN o.subtotal - o.discount_total ELSE 0 END), 0),
 				COUNT(CASE WHEN o.created_at >= $1 AND o.created_at < $2 THEN 1 END)
@@ -186,8 +187,7 @@ func (h *Handler) GetBranchComparison(w http.ResponseWriter, r *http.Request) {
 				ON o.branch_id = b.id
 				AND o.status NOT IN ('cancelled', 'voided')
 				AND o.created_at >= $3 AND o.created_at < $2
-			WHERE b.is_active = true
-			GROUP BY b.id, b.name, b.code, b.branch_type, b.last_heartbeat_at, b.updated_at
+			GROUP BY b.id, b.name, b.code, b.branch_type, b.last_sync_at, b.updated_at, b.pending_sync_count
 			ORDER BY b.name ASC
 		`, fromTime, toTime, priorFrom, priorTo)
 		if err != nil {
@@ -204,6 +204,7 @@ func (h *Handler) GetBranchComparison(w http.ResponseWriter, r *http.Request) {
 				&in.BranchCode,
 				&in.BranchType,
 				&in.LastSyncAt,
+				&in.PendingSyncCount,
 				&in.CurrentNetSales,
 				&in.PriorNetSales,
 				&in.OrderCount,

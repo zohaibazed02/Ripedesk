@@ -349,25 +349,30 @@ func (h *Handler) GetOwnerSummary(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// 2. Aggregate GL revenue (account_code = '4000')
-		glQuery := `
-			SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
-			FROM journal_lines jl
-			JOIN journal_entries je ON je.id = jl.journal_entry_id
-			JOIN chart_of_accounts coa ON coa.id = jl.account_id
-			WHERE je.entry_date >= $1::date AND je.entry_date < $2::date
-			  AND je.status = 'posted'
-			  AND coa.code = '4000'
-			  AND ($3 = '' OR je.branch_id::text = $3)
-		`
-		_ = tx.QueryRow(r.Context(), glQuery, fromTime, toTime, branchID).Scan(&in.GLRevenueTotal)
+		// 2. Aggregate GL revenue (account_code = '4000') inside a savepoint so empty/uninitialized COA never aborts tx
+		if sp, spErr := tx.Begin(r.Context()); spErr == nil {
+			glQuery := `
+				SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
+				FROM journal_lines jl
+				JOIN journal_entries je ON je.id = jl.journal_entry_id
+				JOIN chart_of_accounts coa ON coa.id = jl.account_id
+				WHERE je.entry_date >= $1::date AND je.entry_date < $2::date
+				  AND je.status = 'posted'
+				  AND coa.code = '4000'
+				  AND ($3 = '' OR je.branch_id::text = $3)
+			`
+			if err := sp.QueryRow(r.Context(), glQuery, fromTime, toTime, branchID).Scan(&in.GLRevenueTotal); err != nil {
+				_ = sp.Rollback(r.Context())
+			} else {
+				_ = sp.Commit(r.Context())
+			}
+		}
 
-		// 3. Branch freshness
+		// 3. Branch freshness (matches 000001_tenant_and_rbac.up.sql columns)
 		branchQuery := `
-			SELECT id::text, name, code, branch_type, COALESCE(last_heartbeat_at, updated_at)
+			SELECT id::text, name, code, branch_type, COALESCE(last_sync_at, updated_at), pending_sync_count
 			FROM branches
-			WHERE is_active = true
-			  AND ($1 = '' OR id::text = $1)
+			WHERE ($1 = '' OR id::text = $1)
 			ORDER BY name ASC
 		`
 		rows, err := tx.Query(r.Context(), branchQuery, branchID)
@@ -377,7 +382,7 @@ func (h *Handler) GetOwnerSummary(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var bf BranchFreshness
-			if err := rows.Scan(&bf.BranchID, &bf.BranchName, &bf.BranchCode, &bf.BranchType, &bf.LastSyncAt); err != nil {
+			if err := rows.Scan(&bf.BranchID, &bf.BranchName, &bf.BranchCode, &bf.BranchType, &bf.LastSyncAt, &bf.PendingSyncCount); err != nil {
 				return err
 			}
 			in.Branches = append(in.Branches, bf)

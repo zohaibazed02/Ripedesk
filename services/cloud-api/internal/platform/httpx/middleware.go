@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -53,18 +54,39 @@ func Recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
+	allowAll := false
 	for _, origin := range allowedOrigins {
-		allowed[origin] = struct{}{}
+		o := strings.TrimSpace(origin)
+		if o == "*" {
+			allowAll = true
+		}
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+
+	isAllowedOrigin := func(origin string) bool {
+		if allowAll {
+			return true
+		}
+		if _, ok := allowed[origin]; ok {
+			return true
+		}
+		if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".vercel.app") {
+			return true
+		}
+		if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
+			return true
+		}
+		return false
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" {
-				if _, ok := allowed[origin]; ok {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Vary", "Origin")
-				}
+			if origin != "" && isAllowedOrigin(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Device-ID, X-Device-Signature, If-None-Match")

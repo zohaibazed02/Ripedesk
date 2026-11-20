@@ -218,10 +218,9 @@ func (p *PostgresReadOnlyDataSource) GetBranchFreshnessAndGaps(ctx context.Conte
 	now := time.Now().UTC()
 	err := p.pool.WithTenantTx(ctx, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT id::text, name, COALESCE(last_heartbeat_at, updated_at)
+			SELECT id::text, name, COALESCE(last_sync_at, updated_at), pending_sync_count
 			FROM branches
-			WHERE is_active = true
-			  AND ($1::text[] IS NULL OR cardinality($1::text[]) = 0 OR id::text = ANY($1::text[]))
+			WHERE ($1::text[] IS NULL OR cardinality($1::text[]) = 0 OR id::text = ANY($1::text[]))
 			ORDER BY name ASC
 		`, branchIDs)
 		if err != nil {
@@ -230,10 +229,10 @@ func (p *PostgresReadOnlyDataSource) GetBranchFreshnessAndGaps(ctx context.Conte
 		defer rows.Close()
 		for rows.Next() {
 			var g BranchFreshnessGap
-			if err := rows.Scan(&g.BranchID, &g.BranchName, &g.LastSyncAt); err != nil {
+			if err := rows.Scan(&g.BranchID, &g.BranchName, &g.LastSyncAt, &g.PendingSyncCount); err != nil {
 				return err
 			}
-			g.IsStale = g.LastSyncAt.IsZero() || now.Sub(g.LastSyncAt) > 5*time.Minute
+			g.IsStale = g.PendingSyncCount > 0 || g.LastSyncAt.IsZero() || now.Sub(g.LastSyncAt) > 5*time.Minute
 			out = append(out, g)
 		}
 		return nil

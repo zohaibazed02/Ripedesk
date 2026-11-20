@@ -65,9 +65,9 @@ func main() {
 
 	procHandler := procurement.NewHandler(pool)
 	objStore := storage.NewLocalDiskStore("")
-	ocrExtractor := ocr.NewPilotBenchmarkExtractor()
+	ocrExtractor := ocr.NewExtractorFromEnv()
 	storefrontHandler := storefront.NewHandler(pool)
-	payGateway := payments.NewSimulatedGatewayProvider(os.Getenv("PAYMENT_WEBHOOK_SECRET"))
+	payGateway := payments.NewProviderFromEnv()
 	webhookHandler := payments.NewWebhookHandler(pool, payGateway)
 	deliveryHandler := delivery.NewHandler(pool)
 	telemetryHandler := telemetry.NewHandler(pool, cfg.JWTSecret)
