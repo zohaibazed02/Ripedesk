@@ -141,7 +141,7 @@ func (s *Server) handleTables(w http.ResponseWriter, r *http.Request) {
 		ActiveOrderID string `json:"active_order_id,omitempty"`
 		OrderVersion  int    `json:"order_version"`
 	}
-	var tables []tableRow
+	tables := make([]tableRow, 0)
 	for rows.Next() {
 		var t tableRow
 		if err := rows.Scan(&t.ID, &t.FloorID, &t.TableCode, &t.Capacity, &t.PosX, &t.PosY, &t.Shape, &t.Status, &t.ActiveOrderID, &t.OrderVersion); err == nil {
@@ -174,7 +174,7 @@ func (s *Server) handleActiveOrders(w http.ResponseWriter, r *http.Request) {
 		GrandTotal   string `json:"grand_total"`
 		CreatedAt    string `json:"created_offline_at"`
 	}
-	var orders []orderRow
+	orders := make([]orderRow, 0)
 	for rows.Next() {
 		var o orderRow
 		if err := rows.Scan(&o.ID, &o.OrderNumber, &o.OrderMode, &o.TableID, &o.OrderVersion, &o.Status, &o.GrandTotal, &o.CreatedAt); err == nil {
