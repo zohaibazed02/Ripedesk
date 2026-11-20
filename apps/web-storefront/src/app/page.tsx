@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { OrderModeBadge, type OrderMode } from "@hospitality/ui";
 import { calcCartTotalsMinor, formatMinor } from "../lib/money";
+
+const CLOUD_API_URL =
+  process.env.NEXT_PUBLIC_CLOUD_API_URL || "http://localhost:8080";
+const TENANT_SLUG =
+  process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG || "artisan-roast-bistro";
 
 type StorefrontTheme = "coffee_pickup" | "qsr_delivery" | "dine_in_qr";
 
@@ -83,9 +88,63 @@ export default function StorefrontPage() {
   const router = useRouter();
   const [theme, setTheme] = useState<StorefrontTheme>("coffee_pickup");
   const [branchOnline, setBranchOnline] = useState(true);
+  const [items, setItems] = useState<StoreItem[]>(CATALOG);
+  const [apiOffline, setApiOffline] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"card" | "cod" | "counter">("card");
+
+  useEffect(() => {
+    let active = true;
+    async function loadStorefront() {
+      try {
+        const [cfgRes, menuRes] = await Promise.all([
+          fetch(`${CLOUD_API_URL}/api/v1/storefront/${TENANT_SLUG}/config`, { cache: "no-store" }),
+          fetch(`${CLOUD_API_URL}/api/v1/storefront/${TENANT_SLUG}/menu`, { cache: "no-store" }),
+        ]);
+        if (!cfgRes.ok || !menuRes.ok) throw new Error("storefront api error");
+        const cfgJson = (await cfgRes.json()) as {
+          data?: { branches?: Array<{ is_online?: boolean }> };
+        };
+        const menuJson = (await menuRes.json()) as {
+          data?: {
+            items?: Array<{
+              id: string;
+              name: string;
+              description?: string;
+              base_price?: string;
+            }>;
+          };
+        };
+        if (!active) return;
+        const firstBranch = cfgJson.data?.branches?.[0];
+        if (firstBranch && typeof firstBranch.is_online === "boolean") {
+          setBranchOnline(firstBranch.is_online);
+        }
+        const liveItems = menuJson.data?.items;
+        if (Array.isArray(liveItems) && liveItems.length > 0) {
+          setItems(
+            liveItems.map((it, idx) => ({
+              id: it.id,
+              name: it.name,
+              desc: it.description || "Freshly prepared to order",
+              priceMinor: Math.round(Number(it.base_price || 0) * 100),
+              theme: (["coffee_pickup", "qsr_delivery", "dine_in_qr"] as const)[idx % 3],
+            }))
+          );
+        }
+        setApiOffline(false);
+      } catch {
+        if (active) setApiOffline(true);
+      }
+    }
+    void loadStorefront();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const themeOrderMode: OrderMode =
     theme === "coffee_pickup"
@@ -123,15 +182,52 @@ export default function StorefrontPage() {
     ]);
   }
 
-  function placeOrder() {
-    if (!branchOnline || cart.length === 0) return;
-    router.push("/track/ORD-4082");
+  async function placeOrder() {
+    if (!branchOnline || cart.length === 0 || submitting) return;
+    setSubmitting(true);
+    setCheckoutError(null);
+    try {
+      const res = await fetch(`${CLOUD_API_URL}/api/v1/storefront/${TENANT_SLUG}/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotency_key: `web-${Date.now()}`,
+          order_mode: themeOrderMode.toLowerCase(),
+          payment_method: paymentMethod,
+          items: cart.map((c) => ({
+            menu_item_id: c.id,
+            name: c.name,
+            quantity: c.quantity,
+            unit_price: ((c.unitPriceMinor + c.modifiersMinor) / 100).toFixed(2),
+          })),
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { data?: { order_id?: string; order_number?: string } };
+      const trackingId = data.data?.order_id || data.data?.order_number || "ORD-4082";
+      router.push(`/track/${trackingId}`);
+    } catch {
+      setApiOffline(true);
+      setCheckoutError("Cloud API unreachable — checkout requires live branch heartbeat.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  const visibleItems = CATALOG.filter((i) => i.theme === theme);
+  const visibleItems = items.filter((i) => i.theme === theme);
 
   return (
     <div className="min-h-screen bg-[var(--surface-canvas)] text-[var(--ink-primary)] pb-24">
+      {apiOffline && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-center text-xs font-medium text-amber-300">
+          Offline Fallback Mode: Cloud Storefront API ({CLOUD_API_URL}) is unreachable. Live checkout is paused until reconnected.
+        </div>
+      )}
+      {checkoutError && (
+        <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2 text-center text-xs font-medium text-rose-300">
+          {checkoutError}
+        </div>
+      )}
       {/* Top Storefront Header & Theme Switcher */}
       <header className="sticky top-0 z-30 border-b border-[var(--surface-border)] bg-[var(--surface-card)]/95 px-4 py-3 backdrop-blur-md">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">

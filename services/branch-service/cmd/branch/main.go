@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,13 +70,46 @@ func main() {
 	}
 	defer store.Close()
 
+	// Always overwrite branch_state from non-empty environment variables on startup
+	cleanEnv := func(k string) string {
+		return strings.Trim(strings.TrimSpace(os.Getenv(k)), `"'`)
+	}
+	cloudURL := cleanEnv("CLOUD_API_URL")
+	tenantID := cleanEnv("TENANT_ID")
+	branchID := cleanEnv("BRANCH_ID")
+	deviceID := cleanEnv("BRANCH_DEVICE_ID")
+	deviceSecret := cleanEnv("BRANCH_DEVICE_SECRET")
+	authToken := cleanEnv("BRANCH_AUTH_TOKEN")
+
+	if cloudURL != "" || tenantID != "" || branchID != "" || deviceID != "" || deviceSecret != "" {
+		if _, err := store.DB().Exec(`
+			UPDATE branch_state
+			SET cloud_api_url = CASE WHEN ? != '' THEN ? ELSE cloud_api_url END,
+			    tenant_id     = CASE WHEN ? != '' THEN ? ELSE tenant_id END,
+			    branch_id     = CASE WHEN ? != '' THEN ? ELSE branch_id END,
+			    device_id     = CASE WHEN ? != '' THEN ? ELSE device_id END,
+			    device_secret = CASE WHEN ? != '' THEN ? ELSE device_secret END
+			WHERE id = 1
+		`, cloudURL, cloudURL, tenantID, tenantID, branchID, branchID, deviceID, deviceID, deviceSecret, deviceSecret); err != nil {
+			logger.Warn("failed to hydrate branch_state from env", "error", err)
+		}
+	}
+	logger.Info("branch_config_loaded",
+		"tenant_id", tenantID,
+		"branch_id", branchID,
+		"cloud_api_url", cloudURL,
+		"device_id", deviceID,
+		"device_secret_set", deviceSecret != "",
+		"auth_token_set", authToken != "",
+	)
+
 	hub := lan.NewHub()
 	pub := &hubPublisher{hub: hub}
 	printSpooler := spooler.NewSpooler(store)
 	processor := commands.NewProcessor(store, pub)
 	processor.SetSpooler(printSpooler)
 	server := lan.NewServer(addr, store, hub, processor, printSpooler)
-	syncEngine := branchsync.NewEngine(store, pub, os.Getenv("BRANCH_AUTH_TOKEN"))
+	syncEngine := branchsync.NewEngine(store, pub, authToken)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -98,6 +132,12 @@ func main() {
 
 	// Background outbox shipper, heartbeat & catalog refresh loop
 	go func() {
+		if err := syncEngine.SendHeartbeat(ctx); err != nil {
+			logger.Warn("initial_cloud_heartbeat_failed", "error", err)
+		} else {
+			logger.Info("initial_cloud_heartbeat_ok", "cloud_api_url", cloudURL, "branch_id", branchID)
+		}
+
 		shipTicker := time.NewTicker(3 * time.Second)
 		heartbeatTicker := time.NewTicker(15 * time.Second)
 		catalogTicker := time.NewTicker(60 * time.Second)
@@ -109,11 +149,15 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-shipTicker.C:
-				if shipped, err := syncEngine.ShipNextBatch(ctx); err == nil && shipped > 0 {
+				if shipped, err := syncEngine.ShipNextBatch(ctx); err != nil {
+					logger.Warn("outbox_batch_ship_failed", "error", err)
+				} else if shipped > 0 {
 					logger.Info("outbox_batch_shipped", "count", shipped)
 				}
 			case <-heartbeatTicker.C:
-				_ = syncEngine.SendHeartbeat(ctx)
+				if err := syncEngine.SendHeartbeat(ctx); err != nil {
+					logger.Warn("cloud_heartbeat_failed", "error", err)
+				}
 			case <-catalogTicker.C:
 				_ = syncEngine.RefreshCatalog(ctx)
 			}

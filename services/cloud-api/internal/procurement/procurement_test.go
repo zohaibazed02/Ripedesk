@@ -85,3 +85,45 @@ func TestBuyerGuardrailsAndDuplicateDispatchProtection(t *testing.T) {
 		t.Fatalf("expected duplicate dispatch protection for issued PO")
 	}
 }
+
+func TestReplenishmentIdempotentDraftPersistence(t *testing.T) {
+	// 12L Oat Milk demand vs 8L warehouse stock -> 4L shortage rounded to 6L pack size
+	input := []procurement.ReplenishmentInput{
+		{
+			SupplierID:            "sup-dairy",
+			DestinationLocationID: "loc-f7",
+			CurrencyCode:          "PKR",
+			DeliveryWindow:        "2026-11-21-AM",
+			IngredientID:          "ing-oat-milk",
+			AvgDailyUsage:         decimal.NewFromInt(6),
+			LeadTimeDays:          decimal.NewFromInt(2), // 12L projected
+			SafetyStock:           decimal.Zero,
+			BranchOnHand:          decimal.NewFromInt(8), // 8L available -> 4L shortage
+			ValidatedOpenInbound:  decimal.Zero,
+			ExistingReservations:  decimal.Zero,
+			PackSize:              decimal.NewFromInt(6),
+			MinOrderQty:           decimal.NewFromInt(6),
+		},
+	}
+
+	// Simulate UNIQUE(tenant_id, idempotency_key) PO draft table across two replays
+	createdPOs := make(map[string]int)
+	runOnce := func() int {
+		grouped := procurement.GroupReplenishmentDecisions(input)
+		newlyCreated := 0
+		for groupKey, lines := range grouped {
+			idemKey := procurement.DeterministicReplenishmentKey("tn-1", groupKey, "2026-11-20")
+			if _, exists := createdPOs[idemKey]; !exists {
+				createdPOs[idemKey] = len(lines)
+				newlyCreated++
+			}
+		}
+		return newlyCreated
+	}
+
+	first := runOnce()
+	second := runOnce()
+	if first != 1 || second != 0 || len(createdPOs) != 1 {
+		t.Fatalf("expected exactly 1 PO draft across 2 runs, got first=%d second=%d total=%d", first, second, len(createdPOs))
+	}
+}

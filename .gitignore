@@ -62,3 +62,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Local branch runner containing live JWT / device secrets
+start-branch-local.bat

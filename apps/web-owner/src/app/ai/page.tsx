@@ -3,6 +3,9 @@
 import React, { useState } from "react";
 import Link from "next/link";
 
+const CLOUD_API_URL =
+  process.env.NEXT_PUBLIC_CLOUD_API_URL || "http://localhost:8080";
+
 interface ContributingFactor {
   item: string;
   branch: string;
@@ -184,20 +187,74 @@ const PRESET_ANSWERS: Record<string, GroundedAnswer> = {
 export default function OwnerAIAnalystPage() {
   const [selectedKey, setSelectedKey] = useState<string>("margins");
   const [customQuery, setCustomQuery] = useState("");
-  const answer = PRESET_ANSWERS[selectedKey] ?? PRESET_ANSWERS.margins;
+  const [liveAnswer, setLiveAnswer] = useState<GroundedAnswer | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [apiNotice, setApiNotice] = useState<string | null>(null);
+  const answer = liveAnswer ?? PRESET_ANSWERS[selectedKey] ?? PRESET_ANSWERS.margins;
+
+  async function askLiveAI(question: string, fallbackKey: string) {
+    setSelectedKey(fallbackKey);
+    setLoading(true);
+    setApiNotice(null);
+    const today = new Date().toISOString().slice(0, 10);
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("owner_access_token") || "" : "";
+    try {
+      const res = await fetch(`${CLOUD_API_URL}/api/v1/ai/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ question, from: today, to: today }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as {
+        data?: {
+          question?: string;
+          answer_summary?: string;
+          date_range?: { from: string; to: string };
+          branches_analyzed?: string[];
+          data_quality_warnings?: string[];
+          audit_metadata?: { model_version?: string; tools_invoked?: string[] };
+        };
+      };
+      if (json.data?.answer_summary) {
+        setLiveAnswer({
+          ...PRESET_ANSWERS[fallbackKey],
+          question: json.data.question || question,
+          summary: json.data.answer_summary,
+          dateRange: json.data.date_range
+            ? `${json.data.date_range.from} → ${json.data.date_range.to}`
+            : today,
+          branches: json.data.branches_analyzed || [],
+          warnings: json.data.data_quality_warnings || [],
+          modelVersion: json.data.audit_metadata?.model_version || "grounded-analyst-v1.0",
+          toolsInvoked: json.data.audit_metadata?.tools_invoked || [],
+        });
+      }
+    } catch {
+      setLiveAnswer(null);
+      setApiNotice(`AI API (${CLOUD_API_URL}/api/v1/ai/ask) unreachable or unauthenticated — showing cached grounded example.`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const q = customQuery.toLowerCase();
-    if (q.includes("stale") || q.includes("fresh") || q.includes("count")) {
-      setSelectedKey("freshness");
-    } else if (q.includes("reorder") || q.includes("po")) {
-      setSelectedKey("reorders");
-    } else if (q.includes("waste") || q.includes("variance")) {
-      setSelectedKey("waste");
-    } else {
-      setSelectedKey("margins");
-    }
+    const q = customQuery.trim();
+    if (!q) return;
+    const lower = q.toLowerCase();
+    const key =
+      lower.includes("stale") || lower.includes("fresh") || lower.includes("count")
+        ? "freshness"
+        : lower.includes("reorder") || lower.includes("po")
+        ? "reorders"
+        : lower.includes("waste") || lower.includes("variance")
+        ? "waste"
+        : "margins";
+    void askLiveAI(q, key);
     setCustomQuery("");
   };
 
@@ -264,22 +321,28 @@ export default function OwnerAIAnalystPage() {
                 ["waste", "Where is our highest kitchen waste & variance?"],
               ] as const
             ).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setSelectedKey(key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
-                  selectedKey === key
-                    ? "bg-emerald-600 text-white border-emerald-500"
-                    : "bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-700"
-                }`}
-              >
-                {label}
-              </button>
+                <button
+                  key={key}
+                  disabled={loading}
+                  onClick={() => void askLiveAI(label, key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
+                    selectedKey === key
+                      ? "bg-emerald-600 text-white border-emerald-500"
+                      : "bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-700"
+                  }`}
+                >
+                  {label}
+                </button>
             ))}
           </div>
         </section>
 
         {/* Grounded Answer Workspace */}
+        {apiNotice && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-300">
+            {apiNotice}
+          </div>
+        )}
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/90 p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold">{answer.question}</h2>

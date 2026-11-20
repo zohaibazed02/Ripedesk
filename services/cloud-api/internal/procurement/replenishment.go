@@ -1,10 +1,17 @@
 package procurement
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/hospitality-os/cloud-api/internal/platform/auth"
 	"github.com/hospitality-os/cloud-api/internal/platform/httpx"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
 
@@ -75,14 +82,134 @@ func GroupReplenishmentDecisions(inputs []ReplenishmentInput) map[string][]Reple
 	return grouped
 }
 
+// PersistedPODraft summarizes a PO draft created or deduplicated during replenishment.
+type PersistedPODraft struct {
+	POID           string `json:"po_id"`
+	GroupKey       string `json:"group_key"`
+	IdempotencyKey string `json:"idempotency_key"`
+	LineCount      int    `json:"line_count"`
+	Created        bool   `json:"created"`
+}
+
+// DeterministicReplenishmentKey computes a stable idempotency key per (tenant, groupKey, runDate)
+// so concurrent or repeated replenishment runs never create duplicate PO drafts.
+func DeterministicReplenishmentKey(tenantID, groupKey, runDate string) string {
+	sum := sha256.Sum256([]byte("replenish:" + tenantID + ":" + groupKey + ":" + runDate))
+	return "repl-" + hex.EncodeToString(sum[:16])
+}
+
+// PersistReplenishmentDraftsTx persists grouped replenishment decisions into purchase_orders
+// and purchase_order_lines inside the caller's tenant transaction with idempotency protection.
+func PersistReplenishmentDraftsTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantID string,
+	runDate string,
+	grouped map[string][]ReplenishmentDecision,
+) ([]PersistedPODraft, error) {
+	drafts := make([]PersistedPODraft, 0, len(grouped))
+	for groupKey, lines := range grouped {
+		if len(lines) == 0 {
+			continue
+		}
+		parts := strings.Split(groupKey, "|")
+		supplierID, destLocID, currency := "", "", "PKR"
+		if len(parts) > 0 {
+			supplierID = parts[0]
+		}
+		if len(parts) > 1 {
+			destLocID = parts[1]
+		}
+		if len(parts) > 2 && parts[2] != "" {
+			currency = parts[2]
+		}
+
+		idemKey := DeterministicReplenishmentKey(tenantID, groupKey, runDate)
+		var poID string
+		err := tx.QueryRow(ctx, `
+			INSERT INTO purchase_orders (
+				tenant_id, supplier_id, destination_location_id, currency_code,
+				status, idempotency_key
+			)
+			VALUES ($1, $2, $3, $4, 'draft', $5)
+			ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+			RETURNING id::text
+		`, tenantID, supplierID, destLocID, currency, idemKey).Scan(&poID)
+
+		if err == pgx.ErrNoRows {
+			// Already created by an earlier or concurrent replenishment run
+			_ = tx.QueryRow(ctx, `
+				SELECT id::text FROM purchase_orders WHERE tenant_id = $1 AND idempotency_key = $2
+			`, tenantID, idemKey).Scan(&poID)
+			drafts = append(drafts, PersistedPODraft{
+				POID:           poID,
+				GroupKey:       groupKey,
+				IdempotencyKey: idemKey,
+				LineCount:      len(lines),
+				Created:        false,
+			})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		for _, line := range lines {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO purchase_order_lines (
+					tenant_id, purchase_order_id, ingredient_id, ordered_qty_base
+				)
+				VALUES ($1, $2, $3, $4::numeric)
+			`, tenantID, poID, line.IngredientID, line.RecommendedOrder.String()); err != nil {
+				return nil, err
+			}
+		}
+
+		drafts = append(drafts, PersistedPODraft{
+			POID:           poID,
+			GroupKey:       groupKey,
+			IdempotencyKey: idemKey,
+			LineCount:      len(lines),
+			Created:        true,
+		})
+	}
+	return drafts, nil
+}
+
 func (h *Handler) RunReplenishment(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required", nil)
+		return
+	}
 	var in struct {
-		Items []ReplenishmentInput `json:"items"`
+		RunDate string               `json:"run_date"`
+		Items   []ReplenishmentInput `json:"items"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PAYLOAD", err.Error(), nil)
 		return
 	}
+	if in.RunDate == "" {
+		in.RunDate = time.Now().UTC().Format("2006-01-02")
+	}
 	grouped := GroupReplenishmentDecisions(in.Items)
-	httpx.WriteJSON(w, http.StatusOK, grouped, map[string]int{"po_groups": len(grouped)})
+
+	var drafts []PersistedPODraft
+	if h.pool != nil {
+		err := h.pool.WithTenantTx(r.Context(), claims.TenantID, func(tx pgx.Tx) error {
+			var err error
+			drafts, err = PersistReplenishmentDraftsTx(r.Context(), tx, claims.TenantID, in.RunDate, grouped)
+			return err
+		})
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "REPLENISHMENT_PERSIST_FAILED", err.Error(), nil)
+			return
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"groups": grouped,
+		"drafts": drafts,
+	}, map[string]int{"po_groups": len(grouped)})
 }

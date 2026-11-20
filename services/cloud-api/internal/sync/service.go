@@ -236,8 +236,15 @@ func applyCommandTx(ctx context.Context, tx pgx.Tx, tenantID, branchID string, c
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			return "invalid kds.ticket_updated payload", nil
 		}
-		_, err := tx.Exec(ctx, `UPDATE kitchen_tickets SET status = $2 WHERE id = $1`, p.TicketID, p.Status)
-		return "", err
+		if _, err := tx.Exec(ctx, `UPDATE kitchen_tickets SET status = $2 WHERE id = $1`, p.TicketID, p.Status); err != nil {
+			return "", err
+		}
+		if p.Status == "preparing" {
+			if err := ApplyKDSPrepDeductionTx(ctx, tx, tenantID, branchID, cmd.EventID, cmd.Payload); err != nil {
+				return "", err
+			}
+		}
+		return "", nil
 
 	case "payment.recorded":
 		var p struct {

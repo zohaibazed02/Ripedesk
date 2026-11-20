@@ -11,6 +11,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hospitality-os/branch-service/internal/sqlite"
@@ -41,13 +42,14 @@ type Engine struct {
 }
 
 func NewEngine(store *sqlite.Store, broadcaster StatusBroadcaster, authToken string) *Engine {
+	cleanToken := strings.Trim(strings.TrimSpace(authToken), `"'`)
 	return &Engine{
 		store: store,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 25 * time.Second,
 		},
 		broadcaster: broadcaster,
-		authToken:   authToken,
+		authToken:   cleanToken,
 	}
 }
 
@@ -205,12 +207,17 @@ func (e *Engine) ShipNextBatch(ctx context.Context) (int, error) {
 		req.Header.Set("Authorization", "Bearer "+e.authToken)
 	}
 	req.Header.Set("X-Device-ID", cfg.DeviceID)
-	req.Header.Set("X-Device-Signature", signPayload(cfg.DeviceSecret, reqBody))
+	req.Header.Set("X-Device-Signature", cfg.DeviceSecret)
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil || resp.StatusCode >= 500 {
-		if resp != nil {
+		detail := ""
+		if err != nil {
+			detail = fmt.Sprintf("network error: %v", err)
+		} else {
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 			_ = resp.Body.Close()
+			detail = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 		}
 		// Apply capped exponential backoff with jitter to each item in the failed batch
 		for _, item := range batch {
@@ -220,12 +227,13 @@ func (e *Engine) ShipNextBatch(ctx context.Context) (int, error) {
 			`, nextRetry, item.SeqID)
 		}
 		e.setCloudReachable(ctx, false)
-		return 0, fmt.Errorf("cloud sync unreachable or 5xx")
+		return 0, fmt.Errorf("cloud sync failed (%s)", detail)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("cloud sync unexpected status: %d", resp.StatusCode)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return 0, fmt.Errorf("cloud sync unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 
 	var envelope struct {
@@ -260,8 +268,11 @@ func (e *Engine) ShipNextBatch(ctx context.Context) (int, error) {
 // SendHeartbeat reports pending outbox depth and oldest pending tx timestamp to Cloud API.
 func (e *Engine) SendHeartbeat(ctx context.Context) error {
 	cfg, err := e.loadConfig(ctx)
-	if err != nil || cfg.CloudAPIURL == "" || cfg.BranchID == "" {
-		return err
+	if err != nil {
+		return fmt.Errorf("heartbeat loadConfig: %w", err)
+	}
+	if cfg.CloudAPIURL == "" || cfg.BranchID == "" {
+		return fmt.Errorf("heartbeat skipped: cloud_api_url=%q branch_id=%q", cfg.CloudAPIURL, cfg.BranchID)
 	}
 	snap, err := e.store.HealthSnapshot(ctx)
 	if err != nil {
@@ -285,14 +296,23 @@ func (e *Engine) SendHeartbeat(ctx context.Context) error {
 		req.Header.Set("Authorization", "Bearer "+e.authToken)
 	}
 	resp, err := e.httpClient.Do(req)
-	if err != nil || resp.StatusCode >= 500 {
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
+	if err != nil {
 		e.setCloudReachable(ctx, false)
-		return fmt.Errorf("heartbeat failed")
+		return fmt.Errorf("heartbeat POST %s network error: %w", url, err)
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		e.setCloudReachable(ctx, false)
+		return fmt.Errorf("heartbeat POST %s failed with HTTP %d: %s", url, resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		// Cloud API is reachable, but BRANCH_AUTH_TOKEN is missing, invalid, or out of branch scope
+		e.setCloudReachable(ctx, true)
+		return fmt.Errorf("heartbeat POST %s returned HTTP %d: %s", url, resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
 	e.setCloudReachable(ctx, true)
 	return nil
 }

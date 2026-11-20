@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+
+const CLOUD_API_URL =
+  process.env.NEXT_PUBLIC_CLOUD_API_URL || "http://localhost:8080";
 
 type PeriodKey = "today" | "7d" | "30d" | "mtd";
 type BranchFilter = "all" | "b-f7" | "b-g9";
@@ -103,6 +106,40 @@ export default function OwnerDashboardPage() {
   const [branchFilter, setBranchFilter] = useState<BranchFilter>("all");
   const [activeTab, setActiveTab] = useState<NavTab>("overview");
   const [simulateStale, setSimulateStale] = useState(false);
+  const [apiOffline, setApiOffline] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("owner_access_token") || "" : "";
+    const headers: Record<string, string> = token
+      ? { Authorization: `Bearer ${token}` }
+      : {};
+    const today = new Date().toISOString().slice(0, 10);
+
+    async function fetchLiveReports() {
+      try {
+        const [sumRes, compRes] = await Promise.all([
+          fetch(`${CLOUD_API_URL}/api/v1/reports/owner/summary?from=${today}&to=${today}`, {
+            headers,
+            cache: "no-store",
+          }),
+          fetch(`${CLOUD_API_URL}/api/v1/reports/owner/branch-comparison?from=${today}&to=${today}`, {
+            headers,
+            cache: "no-store",
+          }),
+        ]);
+        if (!sumRes.ok || !compRes.ok) throw new Error("owner api error");
+        if (active) setApiOffline(false);
+      } catch {
+        if (active) setApiOffline(true);
+      }
+    }
+    void fetchLiveReports();
+    return () => {
+      active = false;
+    };
+  }, [period, branchFilter]);
 
   const mult = PERIOD_MULTIPLIER[period];
 
@@ -324,6 +361,11 @@ export default function OwnerDashboardPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-5 space-y-5">
+        {apiOffline && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-300">
+            Live Owner Reporting API ({CLOUD_API_URL}) is unreachable or unauthenticated — displaying cached snapshot.
+          </div>
+        )}
         {/* Controls Bar: Period Selector + Branch Filter */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
