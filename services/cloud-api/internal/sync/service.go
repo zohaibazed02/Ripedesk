@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hospitality-os/cloud-api/internal/platform/db"
@@ -133,10 +134,29 @@ func (s *Service) processSingleCommand(ctx context.Context, tenantID, branchID s
 			return nil
 		}
 
-		// 2. Apply domain state transition
-		conflictReason, applyErr := applyCommandTx(ctx, tx, tenantID, branchID, cmd)
+		// 2. Apply domain state transition inside a nested savepoint so any SQL error
+		// rolls back cleanly without aborting the outer tenant transaction (prevents SQLSTATE 25P02).
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin command savepoint: %w", err)
+		}
+		conflictReason, applyErr := applyCommandTx(ctx, sp, tenantID, branchID, cmd)
 		if applyErr != nil {
+			_ = sp.Rollback(ctx)
 			conflictReason = applyErr.Error()
+			slog.Warn("sync_command_sql_error",
+				"tenant_id", tenantID,
+				"branch_id", branchID,
+				"command_id", cmd.EventID,
+				"command_type", cmd.CommandType,
+				"error", applyErr,
+			)
+		} else if conflictReason != "" {
+			_ = sp.Rollback(ctx)
+		} else {
+			if err := sp.Commit(ctx); err != nil {
+				return fmt.Errorf("commit command savepoint: %w", err)
+			}
 		}
 
 		if conflictReason != "" {

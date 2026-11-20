@@ -23,6 +23,8 @@ func NewPool(ctx context.Context, connString string) (*Pool, error) {
 	cfg.MinConns = 2
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 5 * time.Minute
+	// Safe with Neon / PgBouncer transaction pooling (avoids SQLSTATE 08P01 prepared statement collisions)
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
