@@ -94,3 +94,38 @@ func TestKDSTicketsAndHealthz_NoSQLitePoolDeadlock(t *testing.T) {
 		t.Fatalf("GET /healthz status=%d body=%s", rec2.Code, rec2.Body.String())
 	}
 }
+
+func TestConcurrentSSEAndHealthz_NeverBlocks(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "concurrent_health.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer store.Close()
+
+	hub := NewHub()
+	proc := commands.NewProcessor(store, noopPublisher{})
+	sp := spooler.NewSpooler(store)
+	srv := NewServer(":0", store, hub, proc, sp)
+
+	// Start an active SSE subscriber in the background
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/lan/stream", nil).WithContext(sseCtx)
+		rec := httptest.NewRecorder()
+		srv.httpSrv.Handler.ServeHTTP(rec, req)
+	}()
+
+	// Run 10 concurrent /healthz + /lan/kds/tickets calls under a strict 2s timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		srv.httpSrv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("call %d GET /healthz failed: status=%d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+}

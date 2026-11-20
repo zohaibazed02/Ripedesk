@@ -190,6 +190,7 @@ func (s *Spooler) ProcessPending(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer rows.Close()
 
 	type pendingJob struct {
 		jobID        string

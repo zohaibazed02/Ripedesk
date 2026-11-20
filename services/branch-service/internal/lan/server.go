@@ -94,9 +94,11 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.store.HealthSnapshot(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	snap, err := s.store.HealthSnapshot(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, snap)
@@ -363,7 +365,7 @@ func (s *Server) handleEventsCatchup(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var events []Event
+	events := make([]Event, 0)
 	for rows.Next() {
 		var ev Event
 		if err := rows.Scan(&ev.SeqID, &ev.EventType, &ev.AggregateID, &ev.PayloadJSON, &ev.CreatedAt); err == nil {
